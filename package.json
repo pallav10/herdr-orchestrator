@@ -1,0 +1,15 @@
+{
+  "name": "herdr-orchestrator",
+  "version": "1.0.0",
+  "description": "Durable multi-agent orchestration from one Herdr controller pane.",
+  "license": "MIT",
+  "author": "Pallav Parikh",
+  "homepage": "https://github.com/pallav10/herdr-orchestrator",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pallav10/herdr-orchestrator.git"
+  },
+  "omp": {
+    "extensions": ["./extensions/herdr-context.ts"]
+  }
+}

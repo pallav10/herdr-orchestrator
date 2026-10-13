@@ -2,6 +2,7 @@
 name: herdr-orchestrator
 description: >-
   Use inside a Herdr session when ONE pane should orchestrate sibling worker panes: plan a task graph, fan out work to agent panes, collect results, rotate the controller to a fresh pane when its context fills, or keep durable run/handoff state across pane exits. Also for planning a Herdr orchestration before entering Herdr. Not for: driving a single agent pane, tmux splits, generic subagents or shell & jobs, or an app's internal orchestrator.
+license: MIT
 ---
 # Herdr Orchestrator
 
@@ -9,6 +10,8 @@ description: >-
 One controller owns the task graph and durable run events; workers execute slices.
 Use native `task`/`workflow` for bounded session-local work, `herdr-agent` for durable workers/isolated writers, and `pane` for existing user panes.
 Planning outside Herdr is supported; live pane operations require the chosen Herdr session (`HERDR_ENV=1`).
+
+Resolve adapters relative to this skill's installed directory; use absolute script paths when the controller's working directory is the target repository. The plugin bundles a context-only extension for rotation's measured gate. Restart OMP after plugin installation, keep Herdr's stock lifecycle integration, and avoid loading a second context snapshot exporter.
 
 ## State authority
 - Canonical `session.json.run` locates execution; session paths identify pane history, not execution authority.

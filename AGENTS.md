@@ -22,6 +22,7 @@ Only the bounded-acquisition/owner-diagnostics fallback is approved, not concurr
 
 - `scripts/`: executable adapters, importable shared modules, and colocated `test_*.py` suites; there is no `src/` tree.
 - `references/`: session/run contract and pane environment guidance; `references/templates/` seeds handoff and session documents.
+- `extensions/herdr-context.ts`: OMP-native measured context export; no Herdr lifecycle reporting or vendor integration code is bundled.
 - `docs/plans/`: design notes, not execution authority.
 - In the **target repository**, `docs/runs/<run-id>/` holds the ledger and `artifacts/<node>/<attempt>/`; `docs/sessions/<session-id>/` holds pane history. Initialization requires both runtime directories to be Git-ignored. This skill repository's `.gitignore` does not add those rules.
 
@@ -76,7 +77,7 @@ Session metadata is the sole run locator. Required HANDOFF/NEXT bootstrap resour
 
 ## Runtime/Tooling Preferences
 
-Use `python3` on a POSIX platform: locking requires `fcntl`. Python modules use the standard library only; no Python version pin, dependency manifest, package manager, or Node/Bun runtime is configured. Git is required; live control needs `herdr` on PATH. Model-role lookup invokes `omp config get modelRoles --json`.
+Use `python3` on a POSIX platform: locking requires `fcntl`. Python modules use the standard library only. `package.json` is OMP plugin metadata and registers a TypeScript context extension that uses Node built-ins inside OMP; it adds no npm dependencies or build step. `.omp-plugin/marketplace.json` exposes the root skill with `source: "./"` and `skills: ["./"]`. Git is required; live control needs `herdr` on PATH. Model-role lookup invokes `omp config get modelRoles --json`. Keep the context exporter separate from Herdr's stock lifecycle integration and do not load duplicate snapshot writers.
 
 The documented compatibility target is Herdr 0.8.2/protocol 20, not a runtime version probe. Trust installed CLI help; stop on protocol mismatch. Preserve `HERDR_SESSION`/`HERDR_SOCKET_PATH` and controller pane identity variables when launching child processes. Never stop the Herdr server from an active pane or close user-owned surfaces. Keep runtime ledgers and local `.idea/`, `.desloppify/`, and bytecode artifacts out of commits.
 

@@ -4,6 +4,37 @@ A skill and standard-library Python scripts for coordinating a dependency graph 
 
 [SKILL.md](SKILL.md) is the operator entry point. This repository is not an application, an all-in-one job runner, or a replacement for native `task`/`workflow` tools. Planning and offline checks can happen outside Herdr; live pane control belongs inside the chosen Herdr session.
 
+## Install
+
+Add this public catalog and install its plugin with OMP:
+
+```sh
+omp plugin marketplace add pallav10/herdr-orchestrator
+omp plugin install herdr-orchestrator@pallav10
+```
+
+Installation defaults to user scope (all projects). Add `--scope project` to the install command for one project. The catalog is named `pallav10`; the plugin and skill are named `herdr-orchestrator`. See OMP's [marketplace documentation](https://omp.sh/docs/marketplace).
+
+Alternatively, install the tagged plugin directly:
+
+```sh
+omp plugin install 'github:pallav10/herdr-orchestrator#v1.0.0'
+```
+
+Choose one installation route, not both. Restart OMP after installation: `/reload-plugins` can refresh the skill, but does not initialize newly installed extension modules.
+
+The package includes the root skill, Python scripts/references, and a context-only OMP extension. The extension exports native measured context to owner-only files under `~/.omp/run/herdr-context` for main-UI Herdr panes; it does not launch workers or replace Herdr's lifecycle integration. It requires OMP's `ExtensionContext.getContextUsage()` and main-agent identity APIs; publication checks use OMP 18.10.1.
+
+For a fresh Herdr setup, install its stock OMP lifecycle integration:
+
+```sh
+herdr integration install omp
+```
+
+**Existing customized integrations:** this command overwrites Herdr's managed integration file. Back up local changes first. If an older augmented integration already exports context snapshots, migrate that customization back to the stock lifecycle integration before loading this plugin, so only the bundled extension writes context evidence. Never fabricate snapshots to bypass rotation's gate.
+
+OMP loads the skill as `herdr-orchestrator`. Resolve scripts from its installed directory (or use absolute script paths), not the target repository's working directory. No npm dependencies or build step are required.
+
 ## Executors
 
 | Executor | What it is |
@@ -16,11 +47,11 @@ A skill and standard-library Python scripts for coordinating a dependency graph 
 
 ## Requirements
 
-- `python3`, standard library only; no install/build step or pinned Python minor version. POSIX is required because locking uses `fcntl`.
+- `python3`, standard library only for the orchestration scripts; no build step or pinned Python minor version. The context extension runs inside OMP using Node built-ins. POSIX is required because locking uses `fcntl`.
 - `git` on PATH and a target Git repository for ignore checks, ownership, worktrees, and promotion.
 - `herdr` on PATH for live control, plus the executable for the selected worker kind. The default worker kind is `omp`.
 - `--model-role` resolves roles through `omp config get modelRoles --json`, including when another worker kind is selected. Rotation uses role `default`; detached self-improvement uses role `task` unless overridden.
-- For live work, use the controller's `HERDR_ENV=1`, `HERDR_WORKSPACE_ID`, and `HERDR_PANE_ID`; preserve its selected `HERDR_SESSION` and `HERDR_SOCKET_PATH` in child processes. Rotation additionally requires a fresh, identity-validated OMP context-usage snapshot.
+- For live work, use the controller's `HERDR_ENV=1`, `HERDR_WORKSPACE_ID`, and `HERDR_PANE_ID`; preserve its selected `HERDR_SESSION` and `HERDR_SOCKET_PATH` in child processes. Rotation additionally requires the bundled context extension to be loaded in the main UI and export fresh, identity-validated OMP context usage.
 
 **Herdr compatibility:** CLI help and the bundled API schema were checked with installed Herdr **0.9.3 / protocol 22**. Older reference notes target 0.8.2 / protocol 20. The scripts do not probe versions or negotiate protocols; these offline checks are not proof of live compatibility with the newer protocol. Installed `herdr --help` and `herdr api schema --json` are the syntax/schema authorities.
 
@@ -160,5 +191,10 @@ Implementation boundaries:
 | [routing.py](scripts/routing.py), [liveness.py](scripts/liveness.py), [context_usage.py](scripts/context_usage.py) | Model policy, identity/live observation, native inventory, and measured OMP context validation. |
 | [promotion.py](scripts/promotion.py), [scheduler.py](scripts/scheduler.py) | Promotion/recovery/create-only delivery and lifecycle reconciliation/notifications. |
 | [ioutil.py](scripts/ioutil.py), [cli_common.py](scripts/cli_common.py), [herdr_cli.py](scripts/herdr_cli.py) | Atomic I/O and deadline-bound Git, adapter/child boundaries, and the single Herdr subprocess/confirmed-prompt boundary. |
+| [extensions/herdr-context.ts](extensions/herdr-context.ts) | Native main-UI context snapshot export for the unchanged Python rotation gate; separate from Herdr's lifecycle integration. |
 
 Optional visuals, not execution procedures: [index](docs/diagrams/visual/index.html), [orchestration loop](docs/diagrams/herdr-orchestration-loop.html), and [dynamic orchestration](docs/diagrams/herdr-dynamic-orchestration.html).
+
+## License
+
+[MIT](LICENSE). Plugin metadata lives in [package.json](package.json) and the publisher catalog in [.omp-plugin/marketplace.json](.omp-plugin/marketplace.json).

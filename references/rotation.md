@@ -4,11 +4,13 @@ Use `python3 scripts/rotate.py --session <canonical predecessor session>` from t
 
 ## Measured context gate
 
-The sole accepted source is the installed live main-UI extension's atomic `ExtensionContext.getContextUsage` snapshot (the live SessionStatsTracker used by RPC `get_state`). The snapshot must match the workspace, pane, owning PID, OMP session file/ID, and model and pass freshness/shape validation. Rotation requires `tokens * 2 >= context_window`: exactly 50% qualifies.
+The sole accepted source is the bundled `extensions/herdr-context.ts` main-UI extension's atomic `ExtensionContext.getContextUsage` snapshot (the live SessionStatsTracker used by RPC `get_state`). The snapshot must match the workspace, pane, owning PID, OMP session file/ID, and model and pass freshness/shape validation. Rotation requires `tokens * 2 >= context_window`: exactly 50% qualifies.
 
 Footer percentages, estimates, cumulative/session totals, guessed CLI percentages and fabricated snapshots cannot substitute. Unknown, malformed, ambiguous, unavailable, stale or below-threshold readings refuse with exit 3 before drain, lifecycle mutation, spawn or prompt. Refusal evidence includes fraction/source (fraction may be null); success JSON includes `context_usage`. A fresh reading below 50% means continue in the same pane without restart until enough context is used. Measurement problems are resolved in this pane, not by silently launching another controller.
 
-Only a missing/unloaded integration export calls for `/restart` in the existing OMP pane to reload the installed extension; rotation does not auto-restart or bypass a missing measurement. Preserve the chosen Herdr environment and safe controller procedure. There is no CLI threshold override.
+Only a missing/unloaded context export calls for `/restart` in the existing OMP pane to reload the bundled extension; rotation does not auto-restart or bypass a missing measurement. Preserve the chosen Herdr environment and safe controller procedure. There is no CLI threshold override.
+
+Herdr's stock OMP integration remains responsible for lifecycle/session reporting; it is not assumed to export measured context. The public plugin supplies that exporter separately. Older locally augmented integrations may already write the same snapshot path: back up their changes and restore stock lifecycle reporting before loading this plugin to avoid competing writers. See [installation](../README.md#install).
 
 ## Metadata and bootstrap resources
 

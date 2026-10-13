@@ -1,0 +1,24 @@
+{
+  "name": "pallav10",
+  "owner": {
+    "name": "Pallav Parikh"
+  },
+  "metadata": {
+    "description": "OMP plugins published by pallav10",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "herdr-orchestrator",
+      "source": "./",
+      "version": "1.0.0",
+      "description": "Durable controller-pane orchestration for Herdr: graph dispatch, ownership, verified completion, promotion, and handoff.",
+      "author": {
+        "name": "Pallav Parikh"
+      },
+      "homepage": "https://github.com/pallav10/herdr-orchestrator",
+      "license": "MIT",
+      "skills": ["./"]
+    }
+  ]
+}
