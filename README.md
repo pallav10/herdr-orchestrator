@@ -15,13 +15,7 @@ omp plugin install herdr-orchestrator@pallav10
 
 Installation defaults to user scope (all projects). Add `--scope project` to the install command for one project. The catalog is named `pallav10`; the plugin and skill are named `herdr-orchestrator`. See OMP's [marketplace documentation](https://omp.sh/docs/marketplace).
 
-Alternatively, install the tagged plugin directly:
-
-```sh
-omp plugin install 'github:pallav10/herdr-orchestrator#v1.0.0'
-```
-
-Choose one installation route, not both. Restart OMP after installation: `/reload-plugins` can refresh the skill, but does not initialize newly installed extension modules.
+Use the marketplace route: OMP 18.10.1's direct Git installer does not discover this repository's root-level skill. Restart OMP after installation: `/reload-plugins` can refresh the skill, but does not initialize newly installed extension modules.
 
 The package includes the root skill, Python scripts/references, and a context-only OMP extension. The extension exports native measured context to owner-only files under `~/.omp/run/herdr-context` for main-UI Herdr panes; it does not launch workers or replace Herdr's lifecycle integration. It requires OMP's `ExtensionContext.getContextUsage()` and main-agent identity APIs; publication checks use OMP 18.10.1.
 

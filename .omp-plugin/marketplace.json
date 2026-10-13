@@ -5,13 +5,13 @@
   },
   "metadata": {
     "description": "OMP plugins published by pallav10",
-    "version": "1.0.0"
+    "version": "1.0.1"
   },
   "plugins": [
     {
       "name": "herdr-orchestrator",
       "source": "./",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Durable controller-pane orchestration for Herdr: graph dispatch, ownership, verified completion, promotion, and handoff.",
       "author": {
         "name": "Pallav Parikh"
