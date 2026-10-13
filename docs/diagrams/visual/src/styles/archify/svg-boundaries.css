@@ -1,0 +1,4 @@
+/* Dashed boundary variants */
+.c-security-group { fill: transparent; stroke: var(--security-stroke); stroke-dasharray: 4,4; }
+.c-region         { fill: rgba(251, 191, 36, 0.05); stroke: var(--cloud-stroke); stroke-dasharray: 8,4; }
+.c-lane           { fill: var(--lane-fill); stroke: var(--lane-stroke); stroke-dasharray: 6,6; }

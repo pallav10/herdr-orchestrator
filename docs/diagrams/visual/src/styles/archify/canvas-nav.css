@@ -1,0 +1,70 @@
+svg {
+  width: 100%;
+  min-width: min(900px, 100%);
+  display: block;
+  transform-origin: 0 0;
+  transition: transform 0.18s ease;
+}
+
+.diagram-container.is-camera-moving svg {
+  transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.diagram-container.is-camera-transaction svg { transition: none; }
+.diagram-container.is-pannable { cursor: grab; }
+.diagram-container.is-panning { cursor: grabbing; user-select: none; }
+.diagram-container.is-panning svg { transition: none; }
+
+.diagram-nav {
+  position: absolute;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 12;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem;
+  gap: 0.2rem;
+  border: 1px solid var(--toolbar-border);
+  border-radius: 0.65rem;
+  background: var(--toolbar-bg);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(10px);
+}
+.diagram-nav button,
+.focus-chip button,
+.guided-views button {
+  border: 0;
+  background: transparent;
+  color: var(--toolbar-text);
+  font: inherit;
+  cursor: pointer;
+}
+.diagram-nav button {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.45rem;
+  border-radius: 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.diagram-nav button:hover,
+.diagram-nav button:focus-visible,
+.focus-chip button:hover,
+.focus-chip button:focus-visible,
+.guided-views button:hover,
+.guided-views button:focus-visible { background: var(--toolbar-hover); }
+.diagram-nav button:focus-visible,
+.focus-chip button:focus-visible,
+.guided-views button:focus-visible {
+  outline: 2px solid var(--frontend-stroke);
+  outline-offset: 1px;
+}
+.diagram-nav button:disabled { opacity: 0.38; cursor: default; }
+.diagram-nav [data-view="reset"] { min-width: 3.35rem; font-size: 0.625rem; }
+.diagram-container[data-camera-indicator="true"] .diagram-nav [data-view="reset"] {
+  min-width: 5.2rem;
+  color: var(--frontend-stroke);
+}
+.diagram-nav #btn-diagram-guide[aria-expanded="true"] {
+  color: var(--cloud-stroke);
+  background: var(--toolbar-hover);
+}

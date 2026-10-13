@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Herdr Orchestration Loop",
+    "subtitle": "How the controller pane spawns worker panes and drives a run, as implemented in scripts/",
+    "output": "herdr-orchestration-loop.html",
+    "animation": "none",
+    "visual_preset": "signal-flow",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "main-loop",
+        "label": "Open to land",
+        "focus": ["init", "graph", "dispatch", "spawn", "worker", "monitor", "finish", "promote"],
+        "note": "One node attempt from session bind to promotion CAS."
+      },
+      {
+        "id": "spawn-pane",
+        "label": "Spawning a pane",
+        "focus": ["dispatch", "spawn", "sidecars", "worker", "blocked"],
+        "note": "Worker id is minted and persisted before any Herdr side effect; four sidecars fence at-most-once delivery."
+      },
+      {
+        "id": "authority",
+        "label": "State authority",
+        "focus": ["events", "sidecars", "promote"],
+        "note": "events.jsonl under run.lock is the only mutation authority; caches are replayed."
+      },
+      {
+        "id": "rotation",
+        "label": "Controller rotation",
+        "focus": ["rotate", "init"],
+        "note": "Successor acks with a nonce; lease_transfer bumps the epoch so stale controllers are rejected."
+      }
+    ],
+    "viewBox": [780, 920]
+  },
+  "lanes": [
+    { "id": "controller", "label": "Controller pane (lease holder)" },
+    { "id": "ledger", "label": "Run ledger  docs/runs/<run-id>" },
+    { "id": "scripts", "label": "Dispatch scripts (controller-side)" },
+    { "id": "herdr", "label": "Herdr server + worker pane" },
+    { "id": "recovery", "label": "Blocked + rotation", "variant": "exception" },
+    { "id": "observe", "label": "Observe + finish" }
+  ],
+  "phases": [
+    { "id": "plan", "label": "Open + plan", "fromCol": 0, "toCol": 1 },
+    { "id": "launch", "label": "Dispatch + spawn", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "land", "label": "Observe + land", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["init", "graph", "dispatch", "spawn", "worker", "monitor", "finish", "promote"],
+  "nodes": [
+    { "id": "init", "lane": "controller", "col": 0, "type": "backend", "label": "init-docs.py", "sublabel": "session to run bind" },
+    { "id": "graph", "lane": "controller", "col": 1, "type": "backend", "label": "accept_graph", "sublabel": "owns, base_sha, ref" },
+    { "id": "promote", "lane": "controller", "col": 5, "type": "security", "label": "promote()", "sublabel": "CAS herdr/<run> ref" },
+    { "id": "events", "lane": "ledger", "col": 2, "type": "database", "label": "events.jsonl", "sublabel": "run.lock + epoch gate" },
+    { "id": "sidecars", "lane": "ledger", "col": 3, "type": "database", "label": "sidecars", "sublabel": "intent, identity, done" },
+    { "id": "dispatch", "lane": "scripts", "col": 2, "type": "backend", "label": "dispatch-agent", "sublabel": "epoch, dispatch_intent", "width": 100 },
+    { "id": "spawn", "lane": "scripts", "col": 3, "type": "backend", "label": "spawn-agent", "sublabel": "create, start, prompt" },
+    { "id": "worker", "lane": "herdr", "col": 4, "type": "external", "label": "Worker pane", "sublabel": "fo-<hex24> omp agent" },
+    { "id": "rotate", "lane": "recovery", "col": 0, "type": "security", "label": "rotate.py", "sublabel": "drain, spawn, ack" },
+    { "id": "blocked", "lane": "recovery", "col": 3, "type": "security", "label": "blocked", "sublabel": "not_ready / blocked" },
+    { "id": "monitor", "lane": "observe", "col": 4, "type": "messagebus", "label": "monitor", "sublabel": "agent list, wake line" },
+    { "id": "finish", "lane": "observe", "col": 5, "type": "backend", "label": "finish-agent", "sublabel": "collect + succeeded" }
+  ],
+  "edges": [
+    { "id": "init-graph", "from": "init", "to": "graph", "variant": "default" },
+    { "id": "graph-dispatch", "from": "graph", "to": "dispatch", "variant": "default", "fromSide": "bottom", "toSide": "left" },
+    { "id": "dispatch-events", "from": "dispatch", "to": "events", "label": "dispatch_intent", "variant": "dashed", "role": "branch", "fromSide": "top", "toSide": "bottom" },
+    { "id": "dispatch-spawn", "from": "dispatch", "to": "spawn", "variant": "emphasis" },
+    { "id": "spawn-sidecars", "from": "spawn", "to": "sidecars", "variant": "dashed", "role": "branch", "fromSide": "top", "toSide": "bottom" },
+    { "id": "spawn-worker", "from": "spawn", "to": "worker", "variant": "emphasis", "fromSide": "right", "toSide": "top" },
+    { "id": "spawn-blocked", "from": "spawn", "to": "blocked", "variant": "security", "role": "error", "fromSide": "bottom", "toSide": "top" },
+    { "id": "blocked-worker", "from": "blocked", "to": "worker", "label": "prompt-agent.py", "variant": "dashed", "role": "return", "fromSide": "right", "toSide": "right", "route": "outside-right", "channelX": 688, "labelSegment": 0, "labelDy": -8 },
+    { "id": "worker-monitor", "from": "worker", "to": "monitor", "variant": "default", "fromSide": "bottom", "toSide": "top" },
+    { "id": "monitor-finish", "from": "monitor", "to": "finish", "variant": "default" },
+    { "id": "finish-promote", "from": "finish", "to": "promote", "label": "integrator", "variant": "emphasis", "fromSide": "right", "toSide": "right", "route": "outside-right", "channelX": 704 },
+    { "id": "rotate-init", "from": "rotate", "to": "init", "label": "ack-handoff.py", "variant": "security", "role": "return", "fromSide": "top", "toSide": "bottom" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Spawn sequence (spawn-agent.py)",
+      "items": [
+        "worker_id = fo-<token_hex(12)> written to launch-intent.json first",
+        "herdr worktree create --label ... --no-focus --branch --base",
+        "herdr agent start <worker_id> --kind omp --pane <pane> -- --model M",
+        "workspace report-metadata tokens: provenance run node attempt",
+        "prompt-attempt.json, then herdr agent prompt, then launch-complete.json"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Authority (run_state.py)",
+      "items": [
+        "events.jsonl is the only mutation authority; run.lock is fcntl exclusive",
+        "Every append checks holder lease and event.epoch == controller.epoch",
+        "state.json, controller.json, status.md are replayed caches",
+        "Node states: planned ready running blocked succeeded failed interrupted skipped invalidated",
+        "promote: promotion_intent, git update-ref CAS, promoted, succeeded"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Observe + rotate",
+      "items": [
+        "monitor polls herdr agent list; settled = idle done blocked",
+        "Wake line typed into controller via herdr pane run <pane> <text>",
+        "finish-agent appends succeeded for writers, prints promote() for integrators",
+        "rotate.py first verifies fresh same-process OMP current tokens/contextWindow >=0.5, otherwise refuses exit3 before drain/reconcile/spawn; then lease_drain_started, wait quiescence, spawn successor with nonce",
+        "ack-handoff.py appends one lease_transfer; epoch increments"
+      ]
+    }
+  ]
+}

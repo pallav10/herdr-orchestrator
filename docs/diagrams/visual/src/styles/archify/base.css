@@ -1,0 +1,36 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', 'Liberation Mono', 'Noto Sans Mono CJK SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', monospace;
+  background: var(--bg);
+  min-height: 100vh;
+  padding: 2rem;
+  color: var(--text);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+html[data-preset="signal-flow"] body {
+  background-image:
+    radial-gradient(circle at 18% -8%, rgba(34, 211, 238, 0.14), transparent 34rem),
+    radial-gradient(circle at 92% 18%, rgba(139, 92, 246, 0.12), transparent 30rem);
+  background-attachment: fixed;
+}
+html[data-preset="signal-flow"][data-theme="light"] body {
+  background-image:
+    radial-gradient(circle at 18% -8%, rgba(6, 182, 212, 0.12), transparent 34rem),
+    radial-gradient(circle at 92% 18%, rgba(139, 92, 246, 0.08), transparent 30rem);
+}
+html[data-preset="blueprint"] body {
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: -1px -1px;
+  background-attachment: fixed;
+}
+html[data-preset="editorial"] body {
+  background-image:
+    linear-gradient(90deg, transparent 0, transparent 5.4rem, color-mix(in srgb, var(--security-stroke) 18%, transparent) 5.4rem, color-mix(in srgb, var(--security-stroke) 18%, transparent) calc(5.4rem + 1px), transparent calc(5.4rem + 1px)),
+    repeating-linear-gradient(0deg, transparent 0, transparent 31px, color-mix(in srgb, var(--grid) 36%, transparent) 31px, color-mix(in srgb, var(--grid) 36%, transparent) 32px);
+  background-attachment: fixed;
+}

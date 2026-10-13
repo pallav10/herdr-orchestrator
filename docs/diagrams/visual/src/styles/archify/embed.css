@@ -1,0 +1,29 @@
+/* Gallery/embed mode keeps the generated artifact as the source of truth
+   while presenting only its diagram surface inside a proof card. */
+html[data-embed="true"] body {
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--bg);
+  background-image: none;
+}
+html[data-embed="true"] .toolbar,
+html[data-embed="true"] .header,
+html[data-embed="true"] .cards,
+html[data-embed="true"] .footer,
+html[data-embed="true"] .diagram-nav,
+html[data-embed="true"] .overview-map,
+html[data-embed="true"] .focus-chip,
+html[data-embed="true"] .route-probe,
+html[data-embed="true"] .semantic-lens,
+html[data-embed="true"] .diagram-guide,
+html[data-embed="true"] .node-finder,
+html[data-embed="true"] .guided-views { display: none !important; }
+html[data-embed="true"] .container { max-width: none; }
+html[data-embed="true"] .diagram-container {
+  padding: 0.5rem;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+html[data-embed="true"] .diagram-container svg { min-width: 0; }

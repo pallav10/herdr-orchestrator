@@ -1,0 +1,87 @@
+/* Motion Governor gives the reader a real static state and gives the
+   strongest semantic action the only motion budget. Atmosphere resets to
+   its authored base instead of freezing mid-cycle. Static artifacts never
+   start a decorative pulse or scan. */
+html:not([data-motion-capable="true"]) svg[data-animation="trace"] [data-animate] {
+  animation: none !important;
+}
+html[data-motion="still"] .pulse-dot,
+html[data-motion="still"] .diagram-container::before,
+html[data-motion="still"] svg[data-animation="trace"] [data-animate],
+html[data-motion-owner] .pulse-dot,
+html[data-motion-owner] .diagram-container::before,
+html[data-motion-owner] svg[data-animation="trace"] [data-animate],
+html[data-embed="true"] .pulse-dot,
+html[data-embed="true"] .diagram-container::before,
+html[data-share-playback="true"] .pulse-dot,
+html[data-share-playback="true"] .diagram-container::before,
+html[data-document-hidden="true"] .pulse-dot,
+html[data-document-hidden="true"] .diagram-container::before,
+html[data-document-hidden="true"] svg[data-animation="trace"] [data-animate] {
+  animation: none !important;
+}
+html[data-motion="still"] .diagram-container::before,
+html[data-motion-owner] .diagram-container::before,
+html[data-embed="true"] .diagram-container::before,
+html[data-share-playback="true"] .diagram-container::before {
+  opacity: 0;
+}
+html[data-motion="still"] .guided-view-progress span,
+html[data-motion="still"] .guided-story-caption,
+html[data-motion="still"] .story-trail-flow,
+html[data-motion="still"] .intent-trace-flow,
+html[data-motion="still"] .route-probe-flow,
+html[data-motion="still"] .route-journey-flow,
+html[data-motion="still"] .semantic-lens-flow,
+html[data-motion="still"] .diagram-guide,
+html[data-motion="still"] [data-story-step],
+html[data-motion="still"] .overview-map-live,
+html[data-motion="still"] .guided-view-stop,
+html[data-motion="still"] .share-chapter-cue,
+html[data-motion="still"] .share-chapter-state::before,
+html[data-motion="still"] .share-chapter-progress span,
+html[data-document-hidden="true"] .guided-view-progress span,
+html[data-document-hidden="true"] .story-trail-flow,
+html[data-document-hidden="true"] .intent-trace-flow,
+html[data-document-hidden="true"] .route-probe-flow,
+html[data-document-hidden="true"] .route-journey-flow,
+html[data-document-hidden="true"] .semantic-lens-flow,
+html[data-document-hidden="true"] .diagram-guide,
+html[data-document-hidden="true"] [data-story-step],
+html[data-document-hidden="true"] .overview-map-live,
+html[data-document-hidden="true"] .guided-view-stop,
+html[data-document-hidden="true"] .share-chapter-cue,
+html[data-document-hidden="true"] .share-chapter-state::before,
+html[data-document-hidden="true"] .share-chapter-progress span {
+  animation: none !important;
+}
+html[data-motion="still"] .guided-view-progress span {
+  transform: scaleX(1) !important;
+}
+html[data-motion="still"] svg[data-story-playing="true"] .story-trail-flow {
+  stroke-dasharray: none;
+  stroke-dashoffset: 0;
+  opacity: 0.55;
+}
+html[data-motion="still"] .intent-trace-flow,
+html[data-motion="still"] .route-probe-flow {
+  stroke-dasharray: none;
+  stroke-dashoffset: 0;
+  opacity: 0.72;
+}
+html[data-motion="still"] .route-journey-overlay,
+html[data-document-hidden="true"] .route-journey-overlay { display: none !important; }
+html[data-motion="still"] .relationship-pulse-overlay,
+html[data-motion="still"] .story-carrier-overlay,
+html[data-document-hidden="true"] .story-carrier-overlay { display: none !important; }
+html[data-motion="still"] .chapter-handoff-overlay { display: none !important; }
+html[data-motion="still"] .chapter-handoff-anchor { animation: none !important; }
+html[data-motion="still"] .guided-view-chapter,
+html[data-motion="still"] svg [data-node-id],
+html[data-motion="still"] svg [data-edge-from],
+html[data-motion="still"] svg [data-detail],
+html[data-motion="still"] svg [data-detail-anchor],
+html[data-motion="still"] svg [data-legend-hit],
+html[data-motion="still"] svg {
+  transition: none !important;
+}

@@ -1,0 +1,174 @@
+/* Semantic Radar is a deliberately simplified, viewer-only overview. It
+   uses authored node bounds and the live camera viewport rather than
+   cloning the canonical SVG, so IDs, filters, animation, and export state
+   stay singular and deterministic. */
+.overview-map {
+  position: absolute;
+  right: 1rem;
+  bottom: 4.15rem;
+  z-index: 12;
+  width: 11.25rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--frontend-stroke) 52%, var(--toolbar-border));
+  border-radius: 0.78rem;
+  background: var(--toolbar-menu-bg);
+  color: var(--toolbar-text);
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(16px);
+  font-size: 0.625rem;
+}
+.overview-map[hidden] { display: none; }
+.overview-map[data-docked="true"] {
+  position: fixed;
+  right: var(--archify-radar-right, 1rem);
+  top: var(--archify-radar-top, 1rem);
+  bottom: auto;
+}
+.overview-map[data-docked="true"][data-dock-side="left"] {
+  right: auto;
+  left: var(--archify-radar-left, 1rem);
+}
+html[data-preset="blueprint"] .overview-map { border-radius: 0.28rem; }
+.overview-map-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.25rem;
+  padding: 0.42rem 0.48rem 0.38rem 0.55rem;
+  border-bottom: 1px solid var(--toolbar-border);
+  background: linear-gradient(110deg, color-mix(in srgb, var(--frontend-fill) 45%, transparent), transparent 68%);
+}
+.overview-map-live {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 50%;
+  background: var(--backend-stroke);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--backend-stroke) 52%, transparent);
+  animation: archify-radar-live 2.4s ease-out infinite;
+}
+.overview-map-copy { min-width: 0; line-height: 1.1; }
+.overview-map-copy strong {
+  display: block;
+  overflow: hidden;
+  color: var(--frontend-stroke);
+  font-size: 0.59rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.overview-map-copy small {
+  display: block;
+  margin-top: 0.18rem;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 0.52rem;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.overview-map-close {
+  width: 1.55rem;
+  height: 1.55rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.34rem;
+  background: transparent;
+  color: var(--toolbar-text);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.overview-map-close:hover,
+.overview-map-close:focus-visible { background: var(--toolbar-hover); }
+.overview-map-close:focus-visible,
+.overview-map-surface:focus-visible,
+.overview-map-node:focus-visible {
+  outline: 2px solid var(--frontend-stroke);
+  outline-offset: 1px;
+}
+.overview-map-surface {
+  position: relative;
+  height: 7rem;
+  margin: 0.42rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
+  border-radius: 0.42rem;
+  background:
+    linear-gradient(color-mix(in srgb, var(--panel-border) 26%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--panel-border) 26%, transparent) 1px, transparent 1px),
+    color-mix(in srgb, var(--bg) 86%, transparent);
+  background-size: 12px 12px;
+  cursor: crosshair;
+  touch-action: none;
+}
+html[data-preset="blueprint"] .overview-map-surface { border-radius: 0.1rem; }
+.overview-map-surface > svg {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  transform: none !important;
+  transition: none !important;
+  display: block;
+  overflow: visible;
+}
+.overview-map-node {
+  fill: var(--backend-stroke);
+  fill-opacity: 0.52;
+  stroke: var(--backend-stroke);
+  stroke-opacity: 0.86;
+  vector-effect: non-scaling-stroke;
+  cursor: pointer;
+  transition: fill-opacity 140ms ease, stroke-width 140ms ease, filter 140ms ease;
+}
+.overview-map-node[data-kind="frontend"],
+.overview-map-node[data-kind="start"] { fill: var(--frontend-stroke); stroke: var(--frontend-stroke); }
+.overview-map-node[data-kind="database"],
+.overview-map-node[data-kind="success"] { fill: var(--database-stroke); stroke: var(--database-stroke); }
+.overview-map-node[data-kind="cloud"],
+.overview-map-node[data-kind="waiting"] { fill: var(--cloud-stroke); stroke: var(--cloud-stroke); }
+.overview-map-node[data-kind="messagebus"] { fill: var(--messagebus-stroke); stroke: var(--messagebus-stroke); }
+.overview-map-node[data-kind="security"],
+.overview-map-node[data-kind="decision"],
+.overview-map-node[data-kind="failure"] { fill: var(--security-stroke); stroke: var(--security-stroke); }
+.overview-map-node[data-kind="external"],
+.overview-map-node[data-kind="neutral"] { fill: var(--external-stroke); stroke: var(--external-stroke); }
+.overview-map-node[data-radar-active="true"],
+.overview-map-node:hover,
+.overview-map-node:focus-visible {
+  fill-opacity: 0.92;
+  stroke-width: 2.2;
+  filter: drop-shadow(0 0 3px currentColor);
+}
+.overview-map-viewport {
+  fill: color-mix(in srgb, var(--frontend-fill) 56%, transparent);
+  stroke: var(--frontend-stroke);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--frontend-stroke) 54%, transparent));
+}
+.overview-map-hint {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0 0.52rem 0.46rem;
+  color: var(--text-faint);
+  font-size: 0.49rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.diagram-nav #btn-overview-map[aria-expanded="true"] {
+  color: var(--frontend-stroke);
+  background: var(--toolbar-hover);
+}
+.diagram-nav #btn-route-probe[aria-pressed="true"] {
+  color: var(--backend-stroke);
+  background: var(--toolbar-hover);
+}
+.diagram-nav #btn-semantic-lens[aria-expanded="true"],
+.diagram-nav #btn-semantic-lens[aria-pressed="true"] {
+  color: var(--database-stroke);
+  background: var(--toolbar-hover);
+}

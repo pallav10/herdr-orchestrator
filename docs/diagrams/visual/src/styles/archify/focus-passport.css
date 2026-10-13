@@ -1,0 +1,347 @@
+.focus-chip {
+  position: absolute;
+  left: 1rem;
+  top: 1rem;
+  z-index: 12;
+  display: block;
+  width: min(22rem, calc(100% - 13rem));
+  max-width: calc(100% - 13rem);
+  overflow: hidden;
+  border: 1px solid var(--frontend-stroke);
+  border-radius: 0.85rem;
+  background: var(--toolbar-menu-bg);
+  color: var(--toolbar-text);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(16px);
+  font-size: 0.6875rem;
+}
+.focus-chip[hidden] { display: none; }
+html[data-preset="blueprint"] .focus-chip { border-radius: 0.3rem; }
+.focus-chip button {
+  flex: none;
+  padding: 0.3rem 0.45rem;
+  border-radius: 0.35rem;
+  font-size: 0.625rem;
+}
+.relationship-lens-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.75rem;
+  padding: 0.7rem 0.75rem 0.65rem;
+  border-bottom: 1px solid var(--toolbar-border);
+  background: linear-gradient(120deg, color-mix(in srgb, var(--frontend-fill) 34%, transparent), transparent 72%);
+}
+.relationship-lens-copy { min-width: 0; }
+.relationship-lens-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.18rem;
+}
+.relationship-lens-actions button { white-space: nowrap; }
+.relationship-lens-actions #btn-focus-clear {
+  display: grid;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: 1rem;
+  line-height: 1;
+}
+.relationship-lens-actions #btn-focus-clear:hover,
+.relationship-lens-actions #btn-focus-clear:focus-visible {
+  background: var(--toolbar-hover);
+  color: var(--text);
+}
+.relationship-lens-actions #btn-focus-copy { color: var(--frontend-stroke); }
+.relationship-lens-actions #btn-focus-relations { display: none; }
+.relationship-lens-eyebrow {
+  display: block;
+  margin-bottom: 0.18rem;
+  color: var(--frontend-stroke);
+  font-size: 0.5rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.relationship-lens-title {
+  display: block;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.8rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.semantic-passport-detail {
+  display: block;
+  margin-top: 0.12rem;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.625rem;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.semantic-passport-detail[hidden] { display: none; }
+.semantic-passport-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.24rem;
+  margin-top: 0.42rem;
+}
+.semantic-passport-meta span,
+.semantic-passport-meta code {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0.14rem 0.34rem;
+  border: 1px solid color-mix(in srgb, var(--toolbar-border) 82%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 68%, transparent);
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 0.5rem;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.semantic-passport-meta [data-passport="kind"] {
+  border-color: color-mix(in srgb, var(--frontend-stroke) 50%, var(--toolbar-border));
+  color: var(--frontend-stroke);
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.semantic-passport-meta [data-passport="tag"] { color: var(--cloud-stroke); }
+.semantic-passport-meta [hidden] { display: none; }
+html[data-preset="blueprint"] .semantic-passport-meta span,
+html[data-preset="blueprint"] .semantic-passport-meta code { border-radius: 0.1rem; }
+.semantic-passport-evidence {
+  margin-top: 0.52rem;
+  padding: 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--backend-stroke) 32%, var(--toolbar-border));
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--backend-fill) 18%, var(--panel));
+}
+.semantic-passport-evidence[hidden] { display: none; }
+html[data-preset="blueprint"] .semantic-passport-evidence { border-radius: 0.18rem; }
+.semantic-passport-evidence-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  margin-bottom: 0.35rem;
+}
+.semantic-passport-evidence-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  color: var(--backend-stroke);
+  font-size: 0.5rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.semantic-passport-evidence-status::before {
+  content: '';
+  width: 0.38rem;
+  height: 0.38rem;
+  border-radius: 50%;
+  background: var(--backend-stroke);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--backend-stroke) 14%, transparent);
+}
+.semantic-passport-repository {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 0.5rem;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.semantic-passport-repository:hover,
+.semantic-passport-repository:focus-visible { color: var(--backend-stroke); }
+.semantic-passport-evidence-links { display: grid; gap: 0.22rem; }
+.semantic-passport-source {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.15rem 0.45rem;
+  align-items: center;
+  padding: 0.34rem 0.4rem;
+  border: 1px solid transparent;
+  border-radius: 0.38rem;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.semantic-passport-source:hover,
+.semantic-passport-source:focus-visible {
+  border-color: color-mix(in srgb, var(--backend-stroke) 42%, transparent);
+  background: color-mix(in srgb, var(--backend-fill) 32%, transparent);
+  color: var(--text);
+}
+.semantic-passport-source strong {
+  overflow: hidden;
+  font-size: 0.5625rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.semantic-passport-source code {
+  color: var(--backend-stroke);
+  font: inherit;
+  font-size: 0.5rem;
+}
+.semantic-passport-source small {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 0.5rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.relationship-lens-summary {
+  display: block;
+  margin-top: 0.12rem;
+  color: var(--text-faint);
+  font-size: 0.5625rem;
+}
+.semantic-passport-reach {
+  display: grid;
+  gap: 0.28rem;
+  margin-top: 0.52rem;
+  padding-top: 0.48rem;
+  border-top: 1px solid color-mix(in srgb, var(--toolbar-border) 76%, transparent);
+}
+.semantic-passport-reach[hidden] { display: none; }
+.semantic-passport-reach-label {
+  color: var(--text-faint);
+  font-size: 0.5rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.semantic-passport-reach-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.25rem;
+}
+.semantic-passport-reach-actions button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 0;
+  min-height: 2rem;
+  padding: 0.32rem 0.42rem;
+  border: 1px solid color-mix(in srgb, var(--toolbar-border) 86%, transparent);
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+  color: var(--text-muted);
+  text-align: left;
+}
+.semantic-passport-reach-actions button:hover:not(:disabled),
+.semantic-passport-reach-actions button:focus-visible {
+  border-color: color-mix(in srgb, var(--frontend-stroke) 62%, var(--toolbar-border));
+  color: var(--text);
+}
+.semantic-passport-reach-actions button:focus-visible {
+  outline: 2px solid var(--frontend-stroke);
+  outline-offset: 1px;
+}
+.semantic-passport-reach-actions button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.semantic-passport-reach-actions button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--reach-color, var(--frontend-stroke)) 72%, var(--toolbar-border));
+  background: color-mix(in srgb, var(--reach-fill, var(--frontend-fill)) 48%, transparent);
+  color: var(--text);
+}
+#btn-reach-upstream {
+  --reach-color: var(--database-stroke);
+  --reach-fill: var(--database-fill);
+}
+#btn-reach-downstream {
+  --reach-color: var(--backend-stroke);
+  --reach-fill: var(--backend-fill);
+}
+.semantic-passport-reach-actions strong {
+  color: var(--reach-color, var(--frontend-stroke));
+  font-size: 0.625rem;
+}
+.semantic-passport-reach-status {
+  color: var(--text-faint);
+  font-size: 0.525rem;
+  line-height: 1.4;
+}
+.semantic-passport-reach-status[hidden] { display: none; }
+.relationship-lens-list {
+  max-height: min(18rem, 46vh);
+  overflow: auto;
+  padding: 0.4rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--frontend-stroke) transparent;
+}
+.relationship-lens-list::-webkit-scrollbar { width: 4px; }
+.relationship-lens-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--frontend-stroke) 68%, transparent);
+}
+.relationship-lens-group + .relationship-lens-group { margin-top: 0.35rem; }
+.relationship-lens-group-title {
+  display: block;
+  padding: 0.24rem 0.38rem 0.16rem;
+  color: var(--text-faint);
+  font-size: 0.5rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.relationship-lens-row {
+  display: grid;
+  grid-template-columns: 2.1rem minmax(0, 1fr);
+  gap: 0.06rem 0.45rem;
+  width: 100%;
+  padding: 0.45rem 0.5rem !important;
+  text-align: left;
+}
+.relationship-lens-row:hover,
+.relationship-lens-row:focus-visible,
+.relationship-lens-row[data-preview-active="true"] {
+  background: var(--toolbar-hover);
+  box-shadow: inset 2px 0 0 var(--frontend-stroke);
+}
+.relationship-lens-row:focus-visible {
+  outline: 2px solid var(--frontend-stroke);
+  outline-offset: -2px;
+}
+.relationship-lens-direction {
+  grid-row: 1 / 3;
+  align-self: center;
+  color: var(--frontend-stroke);
+  font-size: 0.5rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+.relationship-lens-row[data-direction="in"] .relationship-lens-direction { color: var(--database-stroke); }
+.relationship-lens-row[data-direction="loop"] .relationship-lens-direction { color: var(--security-stroke); }
+.relationship-lens-row strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.6875rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.relationship-lens-row small {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 0.5625rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.relationship-lens-empty {
+  margin: 0;
+  padding: 0.75rem;
+  color: var(--text-faint);
+  font-size: 0.625rem;
+  text-align: center;
+}

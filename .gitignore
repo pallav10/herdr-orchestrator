@@ -1,0 +1,6 @@
+__pycache__/
+.pytest_cache/
+.idea/
+.desloppify/
+scorecard.png
+docs/plans/

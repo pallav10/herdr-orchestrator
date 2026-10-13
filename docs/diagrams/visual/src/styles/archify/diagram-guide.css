@@ -1,0 +1,194 @@
+/* Diagram Guide keeps the artifact's growing reader vocabulary
+   discoverable without widening the permanent control bar. It derives
+   honest counts at runtime and delegates every action to an existing
+   production interaction instead of creating a second command system. */
+.diagram-guide {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 26;
+  width: min(32rem, calc(100% - 2rem));
+  max-height: min(42rem, calc(100% - 2rem));
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--cloud-stroke) 58%, var(--toolbar-border));
+  border-radius: 0.82rem;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--cloud-fill) 32%, transparent), transparent 42%),
+    var(--toolbar-menu-bg);
+  color: var(--toolbar-text);
+  box-shadow: 0 22px 64px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(18px);
+  animation: archify-guide-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.diagram-guide[hidden] { display: none; }
+html[data-preset="blueprint"] .diagram-guide { border-radius: 0.28rem; }
+.diagram-guide-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 1rem;
+  padding: 0.82rem 0.9rem 0.68rem;
+  border-bottom: 1px solid var(--toolbar-border);
+}
+.diagram-guide-eyebrow {
+  display: block;
+  color: var(--cloud-stroke);
+  font-size: 0.5rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.diagram-guide-title {
+  display: block;
+  margin-top: 0.16rem;
+  color: var(--text);
+  font-size: 0.86rem;
+  letter-spacing: -0.02em;
+}
+.diagram-guide-close {
+  width: 1.8rem;
+  height: 1.8rem;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--toolbar-text);
+  font: inherit;
+  font-size: 1rem;
+  cursor: pointer;
+}
+.diagram-guide-close:hover,
+.diagram-guide-close:focus-visible { background: var(--toolbar-hover); }
+.diagram-guide-stats {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.54rem 0.9rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--toolbar-border) 74%, transparent);
+  color: var(--text-faint);
+  font-size: 0.56rem;
+  letter-spacing: 0.025em;
+}
+.diagram-guide-stats::before {
+  content: '';
+  width: 0.42rem;
+  height: 0.42rem;
+  flex: none;
+  border-radius: 50%;
+  background: var(--backend-stroke);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--backend-stroke) 72%, transparent);
+}
+.diagram-guide-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.38rem;
+  padding: 0.62rem;
+}
+.diagram-guide-action {
+  --guide-accent: var(--frontend-stroke);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 4.15rem;
+  padding: 0.55rem 0.58rem;
+  border: 1px solid color-mix(in srgb, var(--guide-accent) 22%, var(--toolbar-border));
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
+  color: var(--toolbar-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+.diagram-guide-action[data-guide-action="route"] { --guide-accent: var(--backend-stroke); }
+.diagram-guide-action[data-guide-action="map"] { --guide-accent: var(--database-stroke); }
+.diagram-guide-action[data-guide-action="lens"] { --guide-accent: var(--messagebus-stroke); }
+.diagram-guide-action[data-guide-action="story"] { --guide-accent: var(--security-stroke); }
+.diagram-guide-action[data-guide-action="present"] {
+  --guide-accent: var(--cloud-stroke);
+}
+.diagram-guide-action:hover,
+.diagram-guide-action:focus-visible {
+  border-color: color-mix(in srgb, var(--guide-accent) 76%, var(--toolbar-border));
+  background: color-mix(in srgb, var(--guide-accent) 9%, var(--panel));
+  transform: translateY(-1px);
+}
+.diagram-guide-action:focus-visible,
+.diagram-guide-close:focus-visible {
+  outline: 2px solid var(--cloud-stroke);
+  outline-offset: 1px;
+}
+.diagram-guide-action:disabled {
+  opacity: 0.42;
+  cursor: default;
+  transform: none;
+}
+.diagram-guide-index {
+  display: grid;
+  place-items: center;
+  width: 1.65rem;
+  height: 1.65rem;
+  border: 1px solid color-mix(in srgb, var(--guide-accent) 64%, var(--toolbar-border));
+  border-radius: 0.35rem;
+  color: var(--guide-accent);
+  font-size: 0.5rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+.diagram-guide-action-copy { min-width: 0; }
+.diagram-guide-action strong {
+  display: block;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.66rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diagram-guide-action small {
+  display: -webkit-box;
+  margin-top: 0.18rem;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 0.5rem;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.diagram-guide kbd {
+  align-self: start;
+  min-width: 1.45rem;
+  padding: 0.12rem 0.3rem;
+  border: 1px solid var(--toolbar-border);
+  border-radius: 0.25rem;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 0.5rem;
+  text-align: center;
+}
+.diagram-guide-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.34rem 0.62rem;
+  padding: 0.58rem 0.9rem 0.68rem;
+  border-top: 1px solid var(--toolbar-border);
+  color: var(--text-faint);
+  font-size: 0.5rem;
+}
+.diagram-guide-shortcuts span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  white-space: nowrap;
+}
+.diagram-guide-feedback {
+  min-height: 1rem;
+  margin: -0.18rem 0.9rem 0.62rem;
+  color: var(--security-stroke);
+  font-size: 0.5rem;
+}
+.diagram-guide-feedback:empty { display: none; }
+@keyframes archify-guide-in {
+  from { opacity: 0; transform: translateY(-5px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}

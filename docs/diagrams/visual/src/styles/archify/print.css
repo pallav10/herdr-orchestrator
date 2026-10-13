@@ -1,0 +1,88 @@
+/* ==========================================================
+   Print stylesheet — hide interactive controls, force light,
+   drop the grid so the diagram doesn't waste ink, use landscape
+   so wide diagrams fit, pack summary cards into 2 columns to
+   avoid an orphan card on a trailing page.
+   ========================================================== */
+@page { size: landscape; margin: 1.5cm; }
+
+@media print {
+  /* Force the FULL light palette — including component fills/strokes and
+     lane/arrow colors — so printing from dark theme doesn't put neon
+     strokes and translucent dark fills on white paper. */
+  :root, [data-theme="dark"], [data-theme="light"] {
+    --bg: #ffffff;
+    --grid: transparent;
+    --panel: #ffffff;
+    --panel-border: #e2e8f0;
+    --text: #0f172a;
+    --text-muted: #475569;
+    --text-dim: #94a3b8;
+    --text-faint: #64748b;
+    --mask: #ffffff;
+    --lane-fill: rgba(248, 250, 252, 0.65);
+    --lane-stroke: #cbd5e1;
+    --arrow: #94a3b8;
+    --arrow-emphasis: #059669;
+    --frontend-fill:    rgba(34, 211, 238, 0.15);
+    --frontend-stroke:  #0891b2;
+    --backend-fill:     rgba(52, 211, 153, 0.18);
+    --backend-stroke:   #059669;
+    --database-fill:    rgba(167, 139, 250, 0.2);
+    --database-stroke:  #7c3aed;
+    --cloud-fill:       rgba(251, 191, 36, 0.18);
+    --cloud-stroke:     #d97706;
+    --security-fill:    rgba(251, 113, 133, 0.15);
+    --security-stroke:  #e11d48;
+    --messagebus-fill:  rgba(251, 146, 60, 0.15);
+    --messagebus-stroke:#ea580c;
+    --external-fill:    rgba(148, 163, 184, 0.18);
+    --external-stroke:  #64748b;
+  }
+  body { background: #ffffff !important; padding: 0; }
+  .container { max-width: none; }
+  .toolbar, .diagram-nav, .focus-chip, .guided-views, .archify-toast, .no-print { display: none !important; }
+  .chapter-handoff-overlay { display: none !important; }
+  svg [data-node-id][data-chapter-role] { opacity: 1 !important; }
+  svg[data-chapter-preview] [data-node-id],
+  svg[data-chapter-preview] [data-edge-from] { opacity: 1 !important; filter: none !important; }
+  .diagram-container, .card { box-shadow: none; border-color: #e2e8f0; }
+  html[data-preset="signal-flow"] .diagram-container,
+  html[data-preset="signal-flow"] .card { background: #ffffff; }
+  .cards { grid-template-columns: 1fr 1fr; }
+  /* Ensure elements break sensibly across pages */
+  .card { break-inside: avoid; page-break-inside: avoid; }
+  .diagram-container { break-inside: avoid; page-break-inside: avoid; }
+  .diagram-container svg [data-detail] {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+  .diagram-container svg [data-detail-anchor] { transform: none !important; }
+  .diagram-container svg[data-lens-active] [data-node-id],
+  .diagram-container svg[data-lens-active] [data-edge-from],
+  .diagram-container svg[data-legend-preview-active] [data-node-id],
+  .diagram-container svg[data-legend-preview-active] [data-edge-from] {
+    opacity: 1 !important;
+    filter: none !important;
+  }
+  [data-legend-bridge-runtime] { display: none !important; }
+  .semantic-lens-overlay { display: none !important; }
+  .relationship-hit-overlay { display: none !important; }
+  .relationship-pulse-overlay { display: none !important; }
+  .route-probe-overlay, .route-journey-overlay { display: none !important; }
+  .story-trail-overlay,
+  .story-carrier-overlay { display: none !important; }
+  .diagram-container svg[data-focus-active] [data-node-id],
+  .diagram-container svg[data-focus-active] [data-edge-from],
+  .diagram-container svg[data-reach-active] [data-node-id],
+  .diagram-container svg[data-reach-active] [data-edge-from],
+  .diagram-container svg[data-story-beat] [data-story-step],
+  .diagram-container svg[data-story-beat] [data-edge-from][data-story-beat-step],
+  .diagram-container svg[data-route-active] [data-node-id],
+  .diagram-container svg[data-route-active] [data-edge-from] {
+    opacity: 1 !important;
+    filter: none !important;
+    animation: none !important;
+  }
+  h1, .subtitle { color: #0f172a; }
+}

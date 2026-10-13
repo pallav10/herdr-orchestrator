@@ -1,0 +1,39 @@
+.diagram-tabs {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0 0 1rem;
+}
+.diagram-tab {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--toolbar-border);
+  border-radius: 0.5rem;
+  background: var(--toolbar-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+.diagram-tab:hover { background: var(--toolbar-hover); }
+.diagram-tab[aria-current="page"] {
+  border-color: var(--frontend-stroke);
+  color: var(--frontend-stroke);
+}
+.diagram-tab:focus-visible {
+  outline: 2px solid var(--frontend-stroke);
+  outline-offset: 2px;
+}
+html[data-embed="true"] .diagram-tabs { display: none; }
+html[data-present="true"]:not([data-embed="true"]) .diagram-tabs {
+  flex: none;
+  margin: 0;
+}
+@media (max-width: 720px) {
+  .diagram-tab { flex: 1 1 8.5rem; justify-content: center; }
+}

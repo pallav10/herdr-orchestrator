@@ -1,0 +1,244 @@
+/* Presentation Stage is a viewer-only layer: it gives the live diagram
+   the viewport while keeping guided views, theme, focus, and exports real.
+   Embed mode wins when both query parameters are present. */
+html[data-present="true"]:not([data-embed="true"]) body {
+  height: 100dvh;
+  min-height: 0;
+  padding: 1rem;
+  overflow: hidden;
+}
+html[data-present="true"]:not([data-embed="true"]) .container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: none;
+  height: calc(100dvh - 2rem);
+}
+html[data-present="true"]:not([data-embed="true"]) .header {
+  flex: none;
+  min-width: 0;
+  margin: 0;
+  padding-right: 23rem;
+}
+html[data-present="true"]:not([data-embed="true"]) .header-row { margin-bottom: 0.25rem; }
+html[data-present="true"]:not([data-embed="true"]) .subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+html[data-present="true"]:not([data-embed="true"]) .guided-views {
+  flex: none;
+  margin-bottom: 0;
+}
+html[data-present="true"]:not([data-embed="true"]) .diagram-container {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 0.75rem;
+}
+html[data-present="true"]:not([data-embed="true"]) .diagram-container > svg {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+}
+html[data-present="true"]:not([data-embed="true"]) .cards,
+html[data-present="true"]:not([data-embed="true"]) .footer { display: none; }
+html[data-present="true"]:not([data-embed="true"]) #btn-present {
+  border-color: var(--frontend-stroke);
+  color: var(--frontend-stroke);
+}
+
+.container { max-width: 1200px; margin: 0 auto; }
+
+.header { margin-bottom: 2rem; padding-right: 29.5rem; }
+
+html[data-preset="signal-flow"] .header,
+html[data-preset="blueprint"] .header,
+html[data-preset="editorial"] .header { padding-right: 29.5rem; }
+
+.header-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.pulse-dot {
+  width: 12px;
+  height: 12px;
+  background: var(--frontend-stroke);
+  border-radius: 50%;
+  animation: none;
+}
+
+html[data-motion-capable="true"] .pulse-dot { animation: pulse 2s infinite; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+
+.subtitle {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  margin-left: 1.75rem;
+}
+
+html[data-preset="signal-flow"] .header-row::after {
+  content: "SIGNAL FLOW";
+  margin-left: auto;
+  color: var(--frontend-stroke);
+  border: 1px solid var(--frontend-stroke);
+  border-radius: 999px;
+  padding: 0.28rem 0.6rem;
+  font-size: 0.625rem;
+  letter-spacing: 0.12em;
+  opacity: 0.82;
+  box-shadow: 0 0 20px rgba(34, 211, 238, 0.12);
+  white-space: nowrap;
+}
+
+html[data-preset="blueprint"] .pulse-dot {
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--frontend-stroke);
+  border-radius: 1px;
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--bg);
+  transform: rotate(45deg);
+  animation: none;
+}
+html[data-preset="blueprint"] .header-row::after {
+  content: "BLUEPRINT / REV 01";
+  margin-left: auto;
+  padding: 0.28rem 0.55rem;
+  border-top: 1px solid var(--frontend-stroke);
+  border-bottom: 1px solid var(--frontend-stroke);
+  color: var(--frontend-stroke);
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+}
+
+html[data-preset="editorial"] h1,
+html[data-preset="editorial"] .card h3 {
+  font-family: Georgia, 'Times New Roman', 'Songti SC', STSong, serif;
+  letter-spacing: -0.02em;
+}
+html[data-preset="editorial"] h1 { font-size: 1.72rem; font-weight: 600; }
+html[data-preset="editorial"] .pulse-dot {
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--arrow-emphasis);
+  border-radius: 0;
+  background: var(--arrow-emphasis);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--arrow-emphasis) 14%, transparent);
+  transform: rotate(45deg);
+  animation: none;
+}
+html[data-preset="editorial"] .header-row::after {
+  content: "EDITORIAL / FIELD NOTE";
+  margin-left: auto;
+  padding: 0.32rem 0 0.24rem;
+  border-bottom: 2px solid var(--arrow-emphasis);
+  color: var(--arrow-emphasis);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 0.625rem;
+  font-style: italic;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.diagram-container {
+  background: var(--panel);
+  border-radius: 1rem;
+  border: 1px solid var(--panel-border);
+  padding: 1.5rem;
+  overflow: hidden;
+  position: relative;
+}
+
+html[data-preset="signal-flow"] .diagram-container {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(8, 20, 38, 0.82), rgba(3, 8, 18, 0.94));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 28px 80px rgba(0, 0, 0, 0.34);
+}
+html[data-preset="signal-flow"][data-theme="light"] .diagram-container {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(237, 246, 250, 0.94));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72), 0 24px 60px rgba(45, 78, 99, 0.12);
+}
+html[data-preset="blueprint"] .diagram-container {
+  border-color: var(--panel-border);
+  border-radius: 0.35rem;
+  background: var(--panel);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--panel-border) 34%, transparent),
+    0 18px 48px rgba(0, 0, 0, 0.16);
+}
+html[data-preset="blueprint"] .diagram-container::after {
+  content: "";
+  position: absolute;
+  z-index: 10;
+  inset: 0.7rem;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--frontend-stroke), var(--frontend-stroke)) left top / 1.35rem 1px no-repeat,
+    linear-gradient(var(--frontend-stroke), var(--frontend-stroke)) left top / 1px 1.35rem no-repeat,
+    linear-gradient(var(--frontend-stroke), var(--frontend-stroke)) right top / 1.35rem 1px no-repeat,
+    linear-gradient(var(--frontend-stroke), var(--frontend-stroke)) right top / 1px 1.35rem no-repeat,
+    linear-gradient(var(--frontend-stroke), var(--frontend-stroke)) left bottom / 1.35rem 1px no-repeat,
+    linear-gradient(var(--frontend-stroke), var(--frontend-stroke)) left bottom / 1px 1.35rem no-repeat,
+    linear-gradient(var(--frontend-stroke), var(--frontend-stroke)) right bottom / 1.35rem 1px no-repeat,
+    linear-gradient(var(--frontend-stroke), var(--frontend-stroke)) right bottom / 1px 1.35rem no-repeat;
+  opacity: 0.58;
+}
+html[data-preset="editorial"] .diagram-container {
+  overflow: hidden;
+  border-color: var(--panel-border);
+  border-radius: 0.38rem;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--security-fill) 58%, transparent), transparent 12%),
+    var(--panel);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text) 6%, transparent),
+    0 18px 48px color-mix(in srgb, #000 19%, transparent);
+}
+html[data-preset="editorial"] .diagram-container::after {
+  position: absolute;
+  z-index: 10;
+  top: 0.72rem;
+  right: 1.25rem;
+  padding: 0.2rem 0.52rem;
+  border: 1px solid var(--panel-border);
+  background: var(--panel);
+  color: var(--arrow-emphasis);
+  content: "ARCHIFY / PLATE 04";
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 0.52rem;
+  font-style: italic;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  pointer-events: none;
+}
+html[data-embed="true"][data-preset="editorial"] .diagram-container::after { display: none; }
+html[data-motion-capable="true"][data-preset="signal-flow"][data-ambient-motion="running"] .diagram-container::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(115deg, transparent 28%, rgba(103, 232, 249, 0.035) 48%, transparent 68%);
+  transform: translateX(-70%);
+  animation: archify-signal-scan 4.8s ease-in-out 1 both;
+}

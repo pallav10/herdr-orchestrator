@@ -1,0 +1,112 @@
+/* ==========================================================
+   SVG SEMANTIC CLASSES — use these instead of inline fill/stroke
+   ========================================================== */
+.c-grid       { stroke: var(--grid); fill: none; }
+.c-mask       { fill: var(--mask); stroke: none; }
+
+.c-frontend   { fill: var(--frontend-fill);   stroke: var(--frontend-stroke); }
+.c-backend    { fill: var(--backend-fill);    stroke: var(--backend-stroke); }
+.c-database   { fill: var(--database-fill);   stroke: var(--database-stroke); }
+.c-cloud      { fill: var(--cloud-fill);      stroke: var(--cloud-stroke); }
+.c-security   { fill: var(--security-fill);   stroke: var(--security-stroke); }
+.c-messagebus { fill: var(--messagebus-fill); stroke: var(--messagebus-stroke); }
+.c-external   { fill: var(--external-fill);   stroke: var(--external-stroke); }
+
+/* Text helpers */
+.t-primary { fill: var(--text); }
+.t-muted   { fill: var(--text-muted); }
+.t-dim     { fill: var(--text-dim); }
+.t-frontend   { fill: var(--frontend-stroke); }
+.t-backend    { fill: var(--backend-stroke); }
+.t-database   { fill: var(--database-stroke); }
+.t-cloud      { fill: var(--cloud-stroke); }
+.t-security   { fill: var(--security-stroke); }
+.t-messagebus { fill: var(--messagebus-stroke); }
+.t-external   { fill: var(--external-stroke); }
+
+/* Semantic Sigils are small authored role stamps, not icons from a brand
+   pack and not viewer controls. Prefix selectors with svg so the canonical
+   export's SVG-only stylesheet collector keeps them automatically. */
+svg .semantic-sigil {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.76;
+  pointer-events: none;
+}
+svg .semantic-sigil > * { vector-effect: non-scaling-stroke; }
+svg .semantic-sigil .sigil-fill { fill: currentColor; stroke: none; }
+svg .s-frontend   { color: var(--frontend-stroke); }
+svg .s-backend    { color: var(--backend-stroke); }
+svg .s-database   { color: var(--database-stroke); }
+svg .s-cloud      { color: var(--cloud-stroke); }
+svg .s-security   { color: var(--security-stroke); }
+svg .s-messagebus { color: var(--messagebus-stroke); }
+svg .s-external   { color: var(--external-stroke); }
+
+/* Reading Depth is a viewer-only level-of-detail layer. MAP preserves the
+   authored structure and primary labels, READ restores relationship labels
+   and node context, and FULL restores tags and fine annotations. Semantic
+   intent can reveal the relevant detail without moving any geometry. */
+svg [data-detail] { transition: opacity 160ms ease; }
+svg [data-detail-anchor] {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 160ms ease;
+}
+.diagram-container[data-detail-level="map"] svg [data-detail="context"],
+.diagram-container[data-detail-level="map"] svg [data-detail="fine"],
+.diagram-container[data-detail-level="read"] svg [data-detail="fine"] {
+  opacity: 0;
+  pointer-events: none;
+}
+.diagram-container[data-detail-level="map"] svg [data-detail-anchor] {
+  transform: translateY(8px);
+}
+
+/* Focus, lens, preview, route, and story states are stronger reader intent than
+   the global zoom level. Reveal only their exact semantic matches. */
+svg[data-focus-active] [data-focus-match][data-detail],
+svg[data-focus-active] [data-focus-match] [data-detail],
+svg[data-reach-active] [data-reach-match][data-detail],
+svg[data-reach-active] [data-reach-match] [data-detail],
+svg[data-lens-active] [data-lens-match][data-detail],
+svg[data-lens-active] [data-lens-match] [data-detail],
+svg[data-legend-preview-active] [data-legend-preview-match][data-detail],
+svg[data-legend-preview-active] [data-legend-preview-match] [data-detail],
+svg[data-intent-trace-active] [data-intent-trace-match][data-detail],
+svg[data-intent-trace-active] [data-intent-trace-match] [data-detail],
+svg[data-route-active] [data-route-match][data-detail],
+svg[data-route-active] [data-route-match] [data-detail],
+svg[data-story-active] [data-story-step][data-detail],
+svg[data-story-active] [data-story-step] [data-detail],
+svg[data-relationship-preview-active] [data-relationship-preview][data-detail],
+svg[data-relationship-preview-active] [data-relationship-preview] [data-detail],
+svg [data-node-id]:hover [data-detail],
+svg [data-node-id]:focus-visible [data-detail] {
+  opacity: 1;
+  pointer-events: auto;
+}
+svg[data-focus-active] [data-focus-match] [data-detail-anchor],
+svg[data-reach-active] [data-reach-match] [data-detail-anchor],
+svg[data-lens-active] [data-lens-match] [data-detail-anchor],
+svg[data-legend-preview-active] [data-legend-preview-match] [data-detail-anchor],
+svg[data-intent-trace-active] [data-intent-trace-match] [data-detail-anchor],
+svg[data-route-active] [data-route-match] [data-detail-anchor],
+svg[data-story-active] [data-story-step] [data-detail-anchor],
+svg [data-node-id]:hover [data-detail-anchor],
+svg [data-node-id]:focus-visible [data-detail-anchor] { transform: none; }
+
+/* Arrows */
+.a-default   { stroke: var(--arrow); fill: none; }
+.a-emphasis  { stroke: var(--arrow-emphasis); fill: none; }
+.a-security  { stroke: var(--security-stroke); fill: none; stroke-dasharray: 5,5; }
+.a-dashed    { stroke: var(--database-stroke); fill: none; stroke-dasharray: 4,4; }
+
+/* Arrowhead markers reference these */
+.m-default   { fill: var(--arrow); }
+.m-emphasis  { fill: var(--arrow-emphasis); }
+.m-security  { fill: var(--security-stroke); }
+.m-dashed    { fill: var(--database-stroke); }

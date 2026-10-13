@@ -1,0 +1,131 @@
+/* Share Chapter Cue lives in the HTML viewer layer, not inside the SVG.
+   It gives one-shot embeds a title, authored note, truthful stop order,
+   and lifecycle state while canonical diagram geometry stays untouched. */
+.share-chapter-cue { display: none; }
+html[data-embed="true"][data-share-playback="true"] .share-chapter-cue:not([hidden]),
+html[data-embed="true"][data-share-moment="true"] .share-chapter-cue:not([hidden]) {
+  position: absolute;
+  z-index: 18;
+  top: 0.85rem;
+  left: 50%;
+  display: grid;
+  grid-template-columns: auto minmax(9rem, 13.5rem) minmax(0, 1fr);
+  align-items: center;
+  gap: 0.45rem 0.85rem;
+  width: min(52rem, calc(100% - 1.5rem));
+  min-height: 3.35rem;
+  padding: 0.55rem 0.75rem 0.65rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--frontend-stroke) 42%, var(--toolbar-border));
+  border-radius: 0.75rem;
+  background:
+    linear-gradient(115deg, color-mix(in srgb, var(--frontend-fill) 52%, transparent), transparent 45%),
+    color-mix(in srgb, var(--toolbar-menu-bg) 92%, transparent);
+  color: var(--toolbar-text);
+  box-shadow: 0 14px 42px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  backdrop-filter: blur(16px);
+  pointer-events: none;
+  animation: archify-share-cue-enter 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+html[data-preset="blueprint"] .share-chapter-cue {
+  border-radius: 0.2rem;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--frontend-fill) 46%, transparent), transparent 36%),
+    var(--toolbar-menu-bg);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.2);
+  backdrop-filter: none;
+}
+html[data-preset="editorial"] .share-chapter-cue {
+  border-color: var(--panel-border);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--security-fill) 58%, transparent), transparent 42%),
+    var(--toolbar-menu-bg);
+  box-shadow: 0 10px 30px color-mix(in srgb, #000 18%, transparent);
+  backdrop-filter: none;
+}
+html[data-preset="editorial"] .share-chapter-state { color: var(--arrow-emphasis); }
+html[data-preset="editorial"] .share-chapter-state::before {
+  border-radius: 0;
+  box-shadow: none;
+  transform: rotate(45deg) scale(0.8);
+}
+.share-chapter-index {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 5rem;
+  padding-right: 0.75rem;
+  border-right: 1px solid var(--toolbar-border);
+}
+.share-chapter-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.36rem;
+  color: var(--frontend-stroke);
+  font-size: 0.5rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.share-chapter-state::before {
+  width: 0.38rem;
+  height: 0.38rem;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 10px currentColor;
+  content: '';
+}
+.share-chapter-cue[data-state="playing"] .share-chapter-state::before {
+  animation: archify-share-cue-pulse 1.15s ease-in-out infinite;
+}
+.share-chapter-count {
+  color: var(--text-faint);
+  font-size: 0.5rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.share-chapter-copy { min-width: 0; }
+.share-chapter-copy strong,
+.share-chapter-copy small,
+.share-chapter-route {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.share-chapter-copy strong {
+  color: var(--toolbar-text);
+  font-size: 0.6875rem;
+  line-height: 1.35;
+}
+.share-chapter-copy small {
+  margin-top: 0.08rem;
+  color: var(--text-muted);
+  font-size: 0.5rem;
+  line-height: 1.35;
+}
+.share-chapter-route {
+  color: color-mix(in srgb, var(--frontend-stroke) 76%, var(--text-muted));
+  font-size: 0.5625rem;
+  font-weight: 650;
+  letter-spacing: 0.015em;
+  text-align: right;
+}
+.share-chapter-progress {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--toolbar-border) 72%, transparent);
+}
+.share-chapter-progress span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, var(--frontend-stroke), var(--database-stroke));
+  box-shadow: 0 0 12px var(--frontend-stroke);
+  transform: scaleX(0);
+  transform-origin: left center;
+}

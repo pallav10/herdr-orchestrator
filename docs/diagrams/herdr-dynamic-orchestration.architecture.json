@@ -1,0 +1,257 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Herdr Dynamic Orchestration",
+    "subtitle": "Lease-fenced controller, append-only run authority, hybrid executors, immutable artifacts, and isolated promotion",
+    "output": "agent/skills/herdr-orchestrator/herdr-dynamic-orchestration.html",
+    "animation": "none",
+    "visual_preset": "blueprint",
+    "quality_profile": "showcase"
+  },
+  "layout": {
+    "mode": "grid",
+    "origin": [50, 60],
+    "cols": 4,
+    "gapX": 92,
+    "gapY": 104,
+    "cellW": 170,
+    "cellH": 74
+  },
+  "components": [
+    {
+      "id": "controller",
+      "type": "backend",
+      "label": "Orchestrator Pane",
+      "sublabel": "sole controller",
+      "tag": "plan · dispatch · observe",
+      "row": 0,
+      "col": 0
+    },
+    {
+      "id": "lease",
+      "type": "security",
+      "label": "Lease + Epoch",
+      "sublabel": "active holder fence",
+      "tag": "rotation-safe",
+      "row": 0,
+      "col": 1
+    },
+    {
+      "id": "event_log",
+      "type": "database",
+      "label": "events.jsonl",
+      "sublabel": "append-only authority",
+      "tag": "fsync before cache",
+      "row": 0,
+      "col": 2
+    },
+    {
+      "id": "reconcile",
+      "type": "backend",
+      "label": "State Compiler",
+      "sublabel": "reconcile.py",
+      "tag": "deterministic replay",
+      "row": 0,
+      "col": 3
+    },
+    {
+      "id": "graph",
+      "type": "database",
+      "label": "Accepted Graph",
+      "sublabel": "graph.json + base SHA",
+      "tag": "DAG · policies · ownership",
+      "row": 1,
+      "col": 0
+    },
+    {
+      "id": "native",
+      "type": "cloud",
+      "label": "Native Executors",
+      "sublabel": "task + workflow",
+      "tag": "session-local",
+      "row": 1,
+      "col": 1
+    },
+    {
+      "id": "herdr_workers",
+      "type": "backend",
+      "label": "Herdr Workers",
+      "sublabel": "isolated worktrees",
+      "tag": "reattachable identity",
+      "row": 1,
+      "col": 2
+    },
+    {
+      "id": "pane_executor",
+      "type": "frontend",
+      "label": "Existing Pane",
+      "sublabel": "prompt-only executor",
+      "tag": "never auto-closed",
+      "row": 1,
+      "col": 3
+    },
+    {
+      "id": "artifacts",
+      "type": "database",
+      "label": "Attempt Artifacts",
+      "sublabel": "immutable path + hash",
+      "tag": "summary · VCS · integration",
+      "row": 2,
+      "col": 0
+    },
+    {
+      "id": "ownership",
+      "type": "security",
+      "label": "Ownership Gate",
+      "sublabel": "per-attempt porcelain",
+      "tag": "open ordering finding",
+      "row": 2,
+      "col": 1
+    },
+    {
+      "id": "integration",
+      "type": "backend",
+      "label": "Fresh Integration",
+      "sublabel": "B then C from base SHA",
+      "tag": "new D worktree per attempt",
+      "row": 2,
+      "col": 2
+    },
+    {
+      "id": "promotion",
+      "type": "database",
+      "label": "Run-owned Git Ref",
+      "sublabel": "compare-and-swap",
+      "tag": "primary checkout untouched",
+      "row": 2,
+      "col": 3
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "Stable absolute run directory · gitignored execution authority",
+      "wraps": ["lease", "event_log", "reconcile", "graph", "artifacts"]
+    },
+    {
+      "kind": "region",
+      "label": "Hybrid executors",
+      "wraps": ["native", "herdr_workers", "pane_executor"]
+    },
+    {
+      "kind": "region",
+      "label": "Git-isolated delivery",
+      "wraps": ["ownership", "integration", "promotion"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "controller_lease",
+      "from": "controller",
+      "to": "lease",
+      "label": "holder identity",
+      "variant": "security"
+    },
+    {
+      "id": "lease_events",
+      "from": "lease",
+      "to": "event_log",
+      "label": "epoch-fenced append",
+      "variant": "security"
+    },
+    {
+      "id": "events_reconcile",
+      "from": "event_log",
+      "to": "reconcile",
+      "variant": "emphasis"
+    },
+    {
+      "id": "controller_graph",
+      "from": "controller",
+      "to": "graph"
+    },
+    {
+      "id": "reconcile_native",
+      "from": "reconcile",
+      "to": "native",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "label": "dispatch ready"
+    },
+    {
+      "id": "reconcile_herdr",
+      "from": "reconcile",
+      "to": "herdr_workers"
+    },
+    {
+      "id": "reconcile_pane",
+      "from": "reconcile",
+      "to": "pane_executor"
+    },
+    {
+      "id": "native_artifacts",
+      "from": "native",
+      "to": "artifacts",
+      "label": "collected output",
+      "variant": "dashed"
+    },
+    {
+      "id": "herdr_artifacts",
+      "from": "herdr_workers",
+      "to": "artifacts",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "label": "hashed VCS"
+    },
+    {
+      "id": "artifacts_ownership",
+      "from": "artifacts",
+      "to": "ownership",
+      "variant": "security"
+    },
+    {
+      "id": "ownership_integration",
+      "from": "ownership",
+      "to": "integration",
+      "label": "verified inputs",
+      "variant": "emphasis"
+    },
+    {
+      "id": "integration_promotion",
+      "from": "integration",
+      "to": "promotion",
+      "label": "CAS commit",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Authority Split",
+      "items": [
+        "events.jsonl is authoritative; state.json and controller.json are rebuilt caches",
+        "Session docs are pane history and handoff text, never the execution ledger",
+        "Only the current workspace + pane + concrete session holder may mutate"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Recovery Contracts",
+      "items": [
+        "Native task/workflow attempts become interrupted after controller-session loss",
+        "Herdr workers reattach by workspace, pane, agent, run, node, and attempt identity",
+        "Promotion recovery compares the run-owned ref and never mutates the primary checkout"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Dogfood Finding",
+      "items": [
+        "Worktree base fallback and artifactless interrupted retirement were fixed live",
+        "Ownership checks passed, but success-before-ownership ordering remains open",
+        "Selective invalidation and promotion crash recovery passed isolated probes"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,186 @@
+/* Optional trace animation, enabled only by meta.animation = "trace".
+   The ordinary viewer performs one ambient pass and then restores the
+   authored solid/security/async line language. WebM samples the same
+   authored geometry into an explicit canvas timeline. */
+html[data-ambient-motion="running"] svg[data-animation="trace"] [data-animate="edge"] {
+  animation: archify-edge-flow 2.4s linear 1;
+  animation-delay: calc(var(--step, 0) * 160ms);
+}
+html[data-ambient-motion="running"] svg[data-animation="trace"] [data-animate="node"] {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: archify-node-pulse 3.6s ease-in-out 1;
+  animation-delay: calc(var(--step, 0) * 160ms);
+}
+svg[data-preset="signal-flow"][data-animation="trace"] [data-animate="edge"] {
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 3px var(--arrow-emphasis));
+  animation-duration: 1.75s;
+}
+svg[data-preset="signal-flow"][data-animation="trace"] [data-animate="node"] {
+  animation-duration: 3.1s;
+}
+svg[data-preset="blueprint"][data-animation="trace"] [data-animate="edge"] {
+  stroke-linecap: square;
+  filter: none;
+  animation-duration: 2.15s;
+}
+svg[data-preset="blueprint"][data-animation="trace"] [data-animate="node"] {
+  animation-name: archify-blueprint-node-pulse;
+  animation-duration: 3.8s;
+}
+svg[data-preset="editorial"][data-animation="trace"] [data-animate="edge"] {
+  filter: none;
+  animation-duration: 2.2s;
+}
+svg[data-preset="editorial"][data-animation="trace"] [data-animate="node"] {
+  animation-name: archify-editorial-node-pulse;
+  animation-duration: 3.5s;
+}
+/* Embedded proofs are static until a named Story Trail chapter is played.
+   This keeps proof grids calm and ensures ?play=1 stops all viewer motion
+   after one 3.2 second chapter instead of leaving ambient trace loops on. */
+html[data-embed="true"] svg[data-animation="trace"] [data-animate],
+html[data-share-playback="true"] svg[data-animation="trace"] [data-animate] {
+  animation: none !important;
+  stroke-dashoffset: 0;
+}
+@keyframes archify-edge-flow {
+  0% { stroke-dasharray: 10 8; stroke-dashoffset: 54; opacity: 0.42; }
+  88% { stroke-dasharray: 10 8; stroke-dashoffset: 0; opacity: 1; }
+  99.9% { stroke-dasharray: 10 8; stroke-dashoffset: 0; opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 1; }
+}
+@keyframes archify-node-pulse {
+  0%, 72%, 100% { filter: none; stroke-width: 1.5; }
+  18%, 36% {
+    filter: drop-shadow(0 0 8px var(--arrow-emphasis));
+    stroke-width: 2.4;
+  }
+}
+@keyframes archify-blueprint-node-pulse {
+  0%, 72%, 100% { opacity: 1; filter: none; }
+  18%, 36% { opacity: 0.72; filter: drop-shadow(0 0 2px var(--frontend-stroke)); }
+}
+@keyframes archify-editorial-node-pulse {
+  0%, 72%, 100% { opacity: 1; filter: none; }
+  18%, 36% { opacity: 0.78; filter: drop-shadow(0 2px 2px color-mix(in srgb, var(--text) 18%, transparent)); }
+}
+@keyframes archify-signal-scan {
+  0%, 18% { opacity: 1; transform: translateX(-70%); }
+  70% { opacity: 1; transform: translateX(70%); }
+  100% { opacity: 0; transform: translateX(70%); }
+}
+@keyframes archify-radar-live {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--backend-stroke) 52%, transparent); }
+  55%, 100% { box-shadow: 0 0 0 0.32rem transparent; }
+}
+@keyframes archify-guided-progress {
+  from { transform: scaleX(var(--guided-progress-start, 0)); }
+  to { transform: scaleX(1); }
+}
+@keyframes archify-story-flow {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes archify-intent-trace-flow {
+  0% { opacity: 0.28; stroke-dashoffset: 0; }
+  12%, 78% { opacity: 0.94; }
+  100% { opacity: 0; stroke-dashoffset: -1; }
+}
+@keyframes archify-route-probe-flow {
+  0% { stroke-dashoffset: 0; opacity: 0.96; }
+  78% { stroke-dashoffset: -1; opacity: 0.96; }
+  100% { stroke-dasharray: none; stroke-dashoffset: 0; opacity: 0.58; }
+}
+@keyframes archify-route-journey-flow {
+  0% { opacity: 0.16; stroke-dashoffset: 0; }
+  14%, 76% { opacity: 1; }
+  100% { opacity: 0; stroke-dashoffset: -1; }
+}
+@keyframes archify-semantic-lens-flow {
+  0% { opacity: 0.2; stroke-dashoffset: 0; }
+  12%, 78% { opacity: 0.9; }
+  100% { opacity: 0; stroke-dashoffset: -1; }
+}
+@keyframes archify-relationship-pulse {
+  0% { opacity: 0.18; stroke-dashoffset: 0; }
+  10%, 76% { opacity: 0.98; }
+  100% { opacity: 0; stroke-dashoffset: -1; }
+}
+@keyframes archify-relationship-token-life {
+  0%, 7% { opacity: 0; }
+  13%, 82% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes archify-story-beat-node {
+  from { opacity: 0.48; filter: saturate(0.6); }
+  58% { opacity: 1; filter: drop-shadow(0 0 10px var(--frontend-stroke)); }
+  to { opacity: 1; filter: drop-shadow(0 0 7px var(--frontend-stroke)); }
+}
+@keyframes archify-share-cue-enter {
+  from { opacity: 0; transform: translate(-50%, -0.45rem); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+@keyframes archify-share-cue-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.48; transform: scale(0.78); }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-preset="signal-flow"] .diagram-container::before {
+    animation: none !important;
+  }
+  .pulse-dot { animation: none !important; }
+  svg[data-animation="trace"] [data-animate] {
+    animation: none !important;
+    stroke-dashoffset: 0;
+  }
+  .guided-view-progress span {
+    animation: none !important;
+    transform: scaleX(1) !important;
+  }
+  .story-trail-flow,
+  .intent-trace-flow,
+  .route-probe-flow,
+  .semantic-lens,
+  .diagram-guide,
+  [data-story-step],
+  .overview-map-live,
+  .guided-view-stop,
+  .share-chapter-cue,
+  .chapter-handoff-anchor,
+  .share-chapter-state::before,
+  .share-chapter-progress span { animation: none !important; }
+  .guided-view-chapter,
+  svg[data-chapter-preview] [data-node-id],
+  svg[data-chapter-preview] [data-edge-from] { transition: none !important; }
+  svg[data-story-playing="true"] .story-trail-flow {
+    stroke-dasharray: none;
+    stroke-dashoffset: 0;
+    opacity: 0.55;
+  }
+  .intent-trace-flow {
+    animation: none !important;
+    stroke-dasharray: none;
+    stroke-dashoffset: 0;
+    opacity: 0.72;
+  }
+  .route-probe-flow {
+    animation: none !important;
+    stroke-dasharray: none;
+    stroke-dashoffset: 0;
+    opacity: 0.78;
+  }
+  .route-journey-overlay,
+  .story-carrier-overlay { display: none !important; }
+  .semantic-lens-flow {
+    animation: none !important;
+    stroke-dasharray: none;
+    stroke-width: 2.2;
+    opacity: 0.34;
+    filter: none;
+  }
+  .relationship-pulse-overlay { display: none !important; }
+  .guided-view-chapter { transition: none !important; }
+  .source-evidence-beacon,
+  svg [data-node-id], svg [data-edge-from], svg [data-detail], svg [data-detail-anchor], svg [data-legend-hit], svg { transition: none !important; }
+}

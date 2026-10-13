@@ -1,0 +1,2 @@
+/* Keep the floating zoom controls clear of the diagram legend. Embed and presentation keep their own padding. */
+.diagram-container { padding-bottom: 4.5rem; }

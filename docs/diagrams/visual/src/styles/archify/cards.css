@@ -1,0 +1,85 @@
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
+.card {
+  background: var(--panel);
+  border-radius: 0.75rem;
+  border: 1px solid var(--panel-border);
+  padding: 1.25rem;
+}
+
+html[data-preset="signal-flow"] .card {
+  background: linear-gradient(145deg, rgba(10, 24, 43, 0.86), rgba(5, 12, 24, 0.92));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+}
+html[data-preset="signal-flow"][data-theme="light"] .card {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.92), rgba(237, 246, 250, 0.9));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82), 0 12px 32px rgba(45, 78, 99, 0.08);
+}
+
+html[data-preset="blueprint"] .card {
+  position: relative;
+  border-color: var(--panel-border);
+  border-radius: 0.3rem;
+  background: var(--panel);
+  box-shadow: none;
+}
+html[data-preset="blueprint"] .card::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 1rem;
+  width: 2.5rem;
+  border-top: 2px solid var(--frontend-stroke);
+}
+
+html[data-preset="editorial"] .card {
+  position: relative;
+  border-radius: 0.28rem;
+  background: var(--panel);
+  box-shadow: 0 10px 28px color-mix(in srgb, #000 10%, transparent);
+}
+html[data-preset="editorial"] .card::before {
+  position: absolute;
+  top: -1px;
+  left: 1.25rem;
+  width: 3.25rem;
+  border-top: 3px solid var(--arrow-emphasis);
+  content: "";
+}
+html[data-preset="editorial"] .card-dot { border-radius: 0; transform: rotate(45deg) scale(0.78); }
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.card-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.card-dot.cyan     { background: var(--frontend-stroke); }
+.card-dot.emerald  { background: var(--backend-stroke); }
+.card-dot.violet   { background: var(--database-stroke); }
+.card-dot.amber    { background: var(--cloud-stroke); }
+.card-dot.rose     { background: var(--security-stroke); }
+.card-dot.orange   { background: var(--messagebus-stroke); }
+.card-dot.slate    { background: var(--external-stroke); }
+
+.card h3 { font-size: 0.875rem; font-weight: 600; color: var(--text); }
+
+.card ul {
+  list-style: none;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.card li { margin-bottom: 0.375rem; }

@@ -1,0 +1,171 @@
+/* Route Probe answers a reader question over the compiled semantic graph:
+   choose two stable nodes and reveal the shortest authored directed route.
+   The receipt and signal live entirely in the viewer layer. */
+.route-probe {
+  position: absolute;
+  left: 1rem;
+  bottom: 1rem;
+  z-index: 12;
+  width: min(46rem, calc(100% - 25rem));
+  min-width: 18rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--backend-stroke) 62%, var(--toolbar-border));
+  border-radius: 0.82rem;
+  background:
+    linear-gradient(115deg, color-mix(in srgb, var(--backend-fill) 50%, transparent), transparent 62%),
+    var(--toolbar-menu-bg);
+  color: var(--toolbar-text);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(16px);
+  font-size: 0.625rem;
+}
+.route-probe[hidden] { display: none; }
+.route-probe[data-route-dock="top"] {
+  top: 1rem;
+  bottom: auto;
+}
+html[data-preset="blueprint"] .route-probe { border-radius: 0.25rem; }
+.route-probe-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.65rem;
+  padding: 0.52rem 0.58rem 0.44rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--toolbar-border) 80%, transparent);
+}
+.route-probe-copy { min-width: 0; }
+.route-probe-eyebrow {
+  display: block;
+  color: var(--backend-stroke);
+  font-size: 0.48rem;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+.route-probe-title {
+  display: block;
+  margin-top: 0.14rem;
+  overflow: hidden;
+  color: var(--toolbar-text);
+  font-size: 0.72rem;
+  line-height: 1.25;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.route-probe-actions { display: flex; gap: 0.2rem; }
+.route-probe button {
+  min-height: 1.55rem;
+  padding: 0.25rem 0.42rem;
+  border: 0;
+  border-radius: 0.36rem;
+  background: transparent;
+  color: var(--toolbar-text);
+  font: inherit;
+  cursor: pointer;
+}
+.route-probe button:hover,
+.route-probe button:focus-visible { background: var(--toolbar-hover); }
+.route-probe button:focus-visible {
+  outline: 2px solid var(--backend-stroke);
+  outline-offset: 1px;
+}
+.route-probe-copy-link { color: var(--frontend-stroke) !important; }
+.route-probe-find { color: var(--backend-stroke) !important; }
+.route-probe-copy-link[hidden] { display: none; }
+.route-probe-find[hidden] { display: none; }
+.route-probe-path {
+  display: flex;
+  align-items: center;
+  min-height: 2.2rem;
+  padding: 0.42rem 0.58rem 0.24rem;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  white-space: nowrap;
+}
+.route-probe-node,
+.route-probe button.route-probe-node {
+  flex: none;
+  max-width: 9.5rem;
+  overflow: hidden;
+  min-height: 1.75rem !important;
+  padding: 0.22rem 0.38rem;
+  border: 1px solid color-mix(in srgb, var(--backend-stroke) 46%, var(--toolbar-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--backend-fill) 52%, transparent);
+  color: var(--text);
+  font-size: 0.56rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.route-probe-node[data-endpoint="start"] {
+  border-color: var(--frontend-stroke);
+  color: var(--frontend-stroke);
+}
+.route-probe-node[data-endpoint="end"] {
+  border-color: var(--security-stroke);
+  color: var(--security-stroke);
+}
+.route-probe-node[data-route-journey-state="past"] { opacity: 0.66; }
+.route-probe-node[data-route-journey-state="future"] { opacity: 0.48; }
+.route-probe-node[aria-current="step"] {
+  border-color: var(--backend-stroke);
+  background: color-mix(in srgb, var(--backend-fill) 82%, var(--toolbar-menu-bg));
+  color: var(--text);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--backend-stroke) 42%, transparent), 0 0 14px color-mix(in srgb, var(--backend-stroke) 34%, transparent);
+  opacity: 1;
+}
+html[data-preset="blueprint"] .route-probe-node[aria-current="step"] {
+  border-style: double;
+  border-width: 3px;
+  border-radius: 0.2rem;
+  box-shadow: none;
+}
+.route-probe-arrow {
+  flex: none;
+  padding: 0 0.28rem;
+  color: var(--text-faint);
+  font-size: 0.65rem;
+}
+.route-probe-placeholder {
+  color: var(--text-faint);
+  font-size: 0.56rem;
+  letter-spacing: 0.03em;
+}
+.route-probe-status {
+  display: block;
+  min-height: 1.45rem;
+  padding: 0.08rem 0.58rem 0.44rem;
+  color: var(--text-faint);
+  font-size: 0.52rem;
+  line-height: 1.35;
+}
+.route-journey-controls {
+  display: grid;
+  grid-template-columns: 2rem minmax(5.8rem, auto) 2rem minmax(4.8rem, auto);
+  justify-content: start;
+  gap: 0.22rem;
+  padding: 0.08rem 0.58rem 0.28rem;
+}
+.route-journey-controls[hidden] { display: none; }
+.route-journey-controls button {
+  min-height: 1.8rem;
+  border: 1px solid color-mix(in srgb, var(--toolbar-border) 86%, transparent);
+  background: color-mix(in srgb, var(--toolbar-bg) 72%, transparent);
+  font-size: 0.54rem;
+  font-weight: 700;
+}
+.route-journey-controls button:disabled {
+  cursor: default;
+  opacity: 0.34;
+}
+.route-journey-play { color: var(--backend-stroke) !important; }
+.route-journey-overview { color: var(--frontend-stroke) !important; }
+.route-journey-controls[data-playing="true"] .route-journey-play {
+  border-color: color-mix(in srgb, var(--backend-stroke) 64%, var(--toolbar-border));
+  background: color-mix(in srgb, var(--backend-fill) 62%, transparent);
+}
+.route-probe[data-state="error"] {
+  border-color: color-mix(in srgb, var(--security-stroke) 72%, var(--toolbar-border));
+}
+.route-probe[data-state="error"] .route-probe-status { color: var(--security-stroke); }

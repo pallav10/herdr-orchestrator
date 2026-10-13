@@ -1,28 +1,32 @@
 # herdr-orchestrator
 
-A skill and Python scripts for running a multi-agent job from one Herdr controller pane. The controller plans a dependency graph, records durable run events, and delegates work to sibling worker panes.
+A skill and standard-library Python scripts for coordinating a dependency graph from one Herdr controller pane. Herdr supplies the terminal workspaces and agent controls; these scripts add durable run state, ownership gates, receipt-backed completion, promotion, and controller handoff.
 
-[SKILL.md](SKILL.md) defines the operational contract: graph acceptance, dispatch, monitoring, completion, promotion, rotation, and retirement. This skill is not for single-pane work, tmux, generic subagents, or an application's internal orchestration.
+[SKILL.md](SKILL.md) is the operator entry point. This repository is not an application, an all-in-one job runner, or a replacement for native `task`/`workflow` tools. Planning and offline checks can happen outside Herdr; live pane control belongs inside the chosen Herdr session.
 
 ## Executors
 
 | Executor | What it is |
 | --- | --- |
-| `task`, `workflow` | Bounded native harness jobs. Not launched by these scripts; session-local and cannot be reattached after the controller session dies. |
-| `herdr-agent` | Managed worker pane created by `spawn-agent.py`. Long-lived or isolated writer; survives rotation. |
-| `pane` | An existing user pane that gets prompted. Never retired by this flow. |
+| `task`, `workflow` | Bounded native harness jobs, launched by the controller's harness, not these adapters. Session-local; cannot be reattached after the controller session dies. |
+| `herdr-agent` | A managed worker in an orchestrator-created workspace, with an isolated Git worktree for writers/integrators. Can survive controller rotation and be reattached by recorded identity. |
+| `pane` | An existing user-owned agent pane, addressed through `prompt-agent.py`. Never retired by this flow. |
+
+`dispatch-agent.py` routes through `spawn-agent.py`, whose contextual mode accepts only `herdr-agent` nodes. It is **not** a dispatcher for native jobs or existing panes. A contextual pane prompt requires an already-recorded `dispatch_intent` and the graph's exact live handle.
 
 ## Requirements
 
-- `python3`, standard library only (no install step, no pinned minor version in this repo). POSIX only: the run lock uses `fcntl`.
-- `git` on PATH (ignore checks, ownership diffs, promotion).
-- `herdr` on PATH for any live control. The documented target is Herdr 0.8.2 / protocol 20; **the scripts do not check the version**. Installed `herdr --help` is the CLI authority.
-- `omp` on PATH, only when `--model-role` is used.
-- Run live operations inside a Herdr controller pane with `HERDR_WORKSPACE_ID` and `HERDR_PANE_ID`. Preserve the selected session's `HERDR_SESSION` / `HERDR_SOCKET_PATH` when launching child processes.
+- `python3`, standard library only; no install/build step or pinned Python minor version. POSIX is required because locking uses `fcntl`.
+- `git` on PATH and a target Git repository for ignore checks, ownership, worktrees, and promotion.
+- `herdr` on PATH for live control, plus the executable for the selected worker kind. The default worker kind is `omp`.
+- `--model-role` resolves roles through `omp config get modelRoles --json`, including when another worker kind is selected. Rotation uses role `default`; detached self-improvement uses role `task` unless overridden.
+- For live work, use the controller's `HERDR_ENV=1`, `HERDR_WORKSPACE_ID`, and `HERDR_PANE_ID`; preserve its selected `HERDR_SESSION` and `HERDR_SOCKET_PATH` in child processes. Rotation additionally requires a fresh, identity-validated OMP context-usage snapshot.
+
+**Herdr compatibility:** CLI help and the bundled API schema were checked with installed Herdr **0.9.3 / protocol 22**. Older reference notes target 0.8.2 / protocol 20. The scripts do not probe versions or negotiate protocols; these offline checks are not proof of live compatibility with the newer protocol. Installed `herdr --help` and `herdr api schema --json` are the syntax/schema authorities.
 
 ## Quick start
 
-Run the commands below from this skill's root, inside the controller pane. The docs path belongs to the **target repository**, where workers will make changes.
+Run live commands from this skill's root, inside the controller pane. The docs path belongs to the **target repository**, where workers will make changes; invoking initialization writes real state.
 
 **1. In the target repository** (not this checkout), gitignore the runtime state. Init exits 3 if these are not ignored:
 
@@ -37,64 +41,124 @@ Run the commands below from this skill's root, inside the controller pane. The d
 python3 scripts/init-docs.py --dir /abs/path/to/target-repo/docs --job my-job
 ```
 
-It prints one JSON object with canonical absolute `session` and `run` paths. Keep those exact paths; never use `docs/sessions/latest` as a write target.
+The JSON response contains canonical absolute `session` and `run` paths. Retain those exact values; never resolve `docs/sessions/latest` as a write target. `--new` forces a fresh session; `--run /absolute/existing/run` explicitly binds an existing run under the same docs root.
 
-**3. Follow the [orchestration loop](SKILL.md#orchestration-loop)** to accept the graph, dispatch workers, and collect verified results. Graph acceptance, promotion, and branch delivery use the `run_state` Python API, not standalone CLI commands.
+**3. Accept the graph before launching work.** Use `run_state.accept_graph(RUN, graph, repo=REPO, holder=H)`, where `H` contains the controller's workspace, pane, and concrete session path. Graph acceptance validates dependencies and ownership, pins the canonical repository and its current `HEAD`, and initializes `refs/heads/herdr/<run-id>`. Choose the intended committed base first: uncommitted changes are not part of that SHA.
 
-Cache repair only (atomically replaces/fsyncs missing, damaged, or changed projections; unchanged bytes are untouched). CLI output is compact by default; `--full` prints the complete Python reconcile shape:
+The controller-facing [run_state.py](scripts/run_state.py) is an import facade, not a CLI; make `scripts/` importable when using it outside the harness. Graph acceptance, promotion, and explicit branch delivery are Python APIs. See the [orchestration loop](SKILL.md#orchestration-loop) and [API contract](references/run-state-api.md).
 
+**4. Reconcile and dispatch a managed node.** Set `RUN` and `SESSION` to the initializer's returned paths; set `NODE` to a graph node and `EPOCH` to the replayed epoch printed by reconciliation.
+
+```sh
+python3 scripts/reconcile.py --run "$RUN"
+python3 scripts/dispatch-agent.py \
+  --run "$RUN" --node "$NODE" --session "$SESSION" \
+  --holder-workspace "$HERDR_WORKSPACE_ID" --holder-pane "$HERDR_PANE_ID" \
+  --epoch "$EPOCH" --prompt-file /abs/path/to/worker-prompt.txt
 ```
-python3 scripts/reconcile.py --run /abs/path/to/run
-```
+
+With only `--run`, reconciliation repairs replay projections without calling Herdr or appending lifecycle events; it does not advance planned nodes to ready. `dispatch-agent.py` performs holder-authorized readiness reconciliation before launch. Unchanged cache bytes are untouched. Output is compact by default; `--full` returns the complete scheduler result. Add the complete holder triple for live observation/lifecycle work, and `--notify` for edge notifications.
+
+## Controller operations
+
+Use `python3 scripts/<name>.py --help` for current flags. The adapters are synchronous; monitoring is a separate background observer.
+
+| Operation | Interface and boundary |
+| --- | --- |
+| Launch/recover a managed attempt | `dispatch-agent.py` records intent and invokes `spawn-agent.py --resume`. Writers/integrators get isolated worktrees at the accepted base; `--cwd` applies to read-only nodes. Read-only is a task convention, not a filesystem sandbox. |
+| Prompt an existing pane or blocked attempt | `prompt-agent.py` checks the recorded live identity and run/node/attempt tokens. Initial managed-worker launch belongs to `spawn-agent.py`, not this adapter. |
+| Observe workers | `monitor-agents.py` emits change-only JSONL; cadence starts/resets at 2 seconds and backs off to 30 seconds by default. Use an auto-delivering background job or `--notify-pane` so settlement wakes the controller. `--every-poll` disables output suppression. |
+| Collect evidence | `collect-agent.py` reads the OMP session transcript, with terminal-output fallback. Stdout summaries are capped at 1,500 characters; `--full-summary` uncaps them. Contextual receipts retain the full summary. |
+| Check and finish | `check-ownership.py` classifies changes. `finish-agent.py` verifies cleanliness, ownership, declared outputs, and receipts; it records non-integrator success or prints the exact `run_state.promote(...)` call for an integrator. |
+| Retire workers | `retire-agents.py` closes only eligible orchestrator-owned workspaces. Live settlement alone is insufficient; run, identity, completion, and integration-consumption gates still apply. |
+| Rotate the controller | `rotate.py` requires fresh measured OMP context occupancy **at least 50%**, drains the lease, and waits for native work to quiesce. The successor uses `ack-handoff.py` to transfer the exact nonce/holder and advance the epoch; the predecessor is not automatically closed. |
+
+Prompt delivery goes through [herdr_cli.deliver_prompt](scripts/herdr_cli.py): submit once with `--wait --until working`; only structured stalled/timeout responses allow one Enter-and-wait recovery. Prompt text is never resubmitted as a retry. Launch sidecars preserve enough evidence to refuse ambiguous resume rather than create a second worker.
+
+`run_state.promote(...)` compare-and-swaps the run-owned ref and records promotion plus integrator success. Once the whole graph is succeeded/skipped, it also attempts create-only delivery to a separate feature branch. A delivery refusal is returned as `delivery_note` without undoing promotion; `run_state.deliver_branch(...)` can explicitly retry with another branch name. Neither operation checks out or updates the primary branch.
 
 ## State and safety
 
-```
-docs/sessions/<id>/{progress.md,HANDOFF.md,NEXT-SESSION-PROMPT.md,session.json}
-docs/runs/<run-id>/{run.json,graph.json,events.jsonl,state.json,controller.json,status.md,run.lock,artifacts/}
+```text
+docs/sessions/<id>/
+  session.json, progress.md, HANDOFF.md, NEXT-SESSION-PROMPT.md
+docs/runs/<run-id>/
+  run.json, graph.json, events.jsonl
+  graph-revisions/, artifacts/<node>/<attempt>/
+  state.json, controller.json, status.md, run.lock
 ```
 
-- `events.jsonl` is the fact log. `state.json` / `controller.json` are replay caches; `status.md` is disposable. Session markdown is history, not proof of success. Herdr `idle`/`done` is observation only.
-- A holder is workspace + pane + concrete session path. Pass the replayed epoch; do not authorize from the lease cache.
-- Concurrent writers need disjoint `owns` paths; serialize overlapping work. Integrators combine dependency outputs in their own worktrees.
-- Close only surfaces this flow created. Existing user panes are never retired. Never stop the Herdr server from an active session.
-- Promotion updates a run-owned ref, not the primary checkout; feature-branch delivery is separate. Keep writer/integrator worktrees and branches until matching integration receipts exist, including after failed promotion.
-- Only bounded lock acquisition and unverified owner diagnostics are approved, not concurrent-dispatch locking. Lock-taking adapters accept `--lock-timeout SECONDS` (finite positive, default 120; usage 2, timeout refusal 3), and locked facade calls accept `lock_timeout=120`; exclusive critical-section extent is unchanged. See the [locking contract](references/run-state-api.md#events-locking-and-dispatch).
+- `session.json.run` is the run locator. `events.jsonl` is execution authority; accepted graph revisions are immutable payloads referenced by `graph_accepted` events. `state.json` / `controller.json` / `status.md` are replay projections. Do not edit caches, graph files, session prose, or Herdr `idle`/`done` state to declare success.
+- Authorization uses the exact workspace + pane + concrete session holder and replayed lease. Dispatch and contextual prompting also require the replayed epoch; never authorize from `controller.json`, labels, focus, or sidebar order.
+- Concurrent writers need disjoint `owns`; serialize overlapping work. Keep writer/integrator worktrees and branches until matching integration receipts exist, including after failed promotion.
+- Close only surfaces this flow created. User-owned panes are never retired; never stop the Herdr server from an active session. Native inventory omission means unknown, not empty; `--native-inventory-complete` is an explicit completeness assertion.
+- Lock-taking adapters accept finite-positive `--lock-timeout SECONDS` (default 120); locked facade APIs accept `lock_timeout=120`. Invalid values exit 2; acquisition timeout refuses with exit 3. The exclusive authorization-through-launch critical section is preserved. `run.lock.owner` is unverified diagnostic evidence, never permission to break a lock. See the [locking contract](references/run-state-api.md#events-locking-and-dispatch).
 
 ## Detached self-improvement
 
-While the skill is in use, concrete defects/improvements trigger `scripts/self-improve.py --finding TEXT --skill-repo /absolute/editable-skill-repo`. It queues a background launcher and returns immediately; a new no-focus worker implements the finding in an independent clone/branch. The active run gets no dependency or ledger change, and its checkout and installed skill are untouched. Candidate fixes require separately authorized review/deployment after the run. See the [operator contract](references/identity-reattach.md#detached-self-improvement).
+While using the skill, queue a distinct evidenced defect or concrete improvement without adding it to the reporting run:
+
+```sh
+python3 scripts/self-improve.py \
+  --skill-repo /absolute/editable-skill-repo \
+  --finding "Observed issue; evidence; bounded change; acceptance check"
+```
+
+The command returns a queued-job receipt immediately. Its detached launcher clones the source's **committed HEAD** into `~/.omp/run/herdr-improvements/<job>/checkout`, removes the clone's origin, and starts a no-focus worker on an independent branch. Source-checkout WIP is not copied. A queued receipt does not prove worker startup or completion; launcher evidence is kept in the job directory.
+
+This path makes no active-run graph/ledger changes and does not merge, push, install, or reload a candidate fix. The worker is instructed to leave the source checkout, installed skill, reporting run, and its panes untouched, and to produce `change.patch` and `result.json` for separately authorized review/deployment. See the [operator contract](references/identity-reattach.md#detached-self-improvement).
 
 ## Safe checks
 
-`--help` exits during argument parsing, before any Herdr, git or ledger access:
+Static Herdr inspection does not require attaching to or controlling a session:
 
+```sh
+herdr --version
+herdr --help
+herdr api schema --json
 ```
+
+Adapter `--help` exits during argument parsing, before Herdr, Git, or ledger access:
+
+```sh
 python3 scripts/init-docs.py --help
 python3 scripts/dispatch-agent.py --help
+python3 scripts/finish-agent.py --help
 python3 scripts/reconcile.py --help
 python3 scripts/self-improve.py --help
 ```
 
-Other adapters also expose `--help`. Use it for current flags rather than relying on module docstrings. These checks do not exercise a live orchestration.
+Do not run bare `herdr` for discovery: it launches/attaches the TUI. CLI help, bundled-schema inspection, and mocked adapter suites are not live orchestration proof. Use disposable repositories/run directories for development smoke checks, never an active run.
+
+Most adapters emit one JSON object; monitoring emits flushed JSONL. General exits are 0 success, 1 runtime failure, 2 usage, and 3 refusal. `prompt-agent.py` additionally exits 4 for `agent_blocked`; monitor exits 2 for timeout and 3 for a vanished agent; ownership exits 3 for findings.
 
 ## Development
 
-```
+```sh
 python3 -m unittest discover -s scripts -p 'test_*.py'
-python3 scripts/prompt_contract.py     # self-check, asserts only, no I/O
-# Independent stdlib suites in eight processes (nonzero if any suite fails):
-python3 -c 'import concurrent.futures, glob, os, subprocess, sys; suites = sorted(glob.glob("scripts/test_*.py")); pool = concurrent.futures.ThreadPoolExecutor(max_workers=8); codes = list(pool.map(lambda p: subprocess.call([sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", os.path.basename(p), "-q"]), suites)); pool.shutdown(); sys.exit(any(codes))'
+python3 -m unittest discover -s scripts -p 'test_run_state.py'
+python3 scripts/prompt_contract.py
 ```
 
 ## Layout
 
-- [SKILL.md](SKILL.md): contract, toolbox, orchestration loop.
-- [references/session-docs.md](references/session-docs.md): session/run layout and gates.
-- [references/pane-environment.md](references/pane-environment.md): ports and shared queues (convention, not enforced).
-- [references/controller-playbook.md](references/controller-playbook.md): practical controller examples.
-- Situational reference index (D14): [identity/reattachment](references/identity-reattach.md), [rotation](references/rotation.md), [retirement/promotion](references/retire-promote.md), [run-state API/output](references/run-state-api.md).
-- [docs/herdr-cheatsheet.md](docs/herdr-cheatsheet.md): installed Herdr CLI and adapter examples.
-- [scripts/](scripts/): CLI adapters, shared modules, and colocated `test_*.py` suites. `run_state.py` is a library, not a CLI.
-- Defining modules (D5): `scripts/ioutil.py` (I/O/errors/git), `graph_model.py` (graph/ownership model), `ledger.py` (events/replay/caches), `authz.py` (leases/guards), `artifacts.py` (dispatch snapshots), `receipts.py` (VCS/integration evidence), `routing.py` (model policy), `liveness.py` (identity/observation), `promotion.py` (CAS/recovery/delivery), `scheduler.py` (lifecycle/reconcile), and `cli_common.py` (adapter/child boundary). `run_state.py` is the stable controller-facing facade; adapters import defining modules.
-- [visual/index.html](docs/diagrams/visual/index.html), [herdr-orchestration-loop.html](docs/diagrams/herdr-orchestration-loop.html), [herdr-dynamic-orchestration.html](docs/diagrams/herdr-dynamic-orchestration.html): optional diagrams, not procedure.
+- [SKILL.md](SKILL.md): operator contract and orchestration loop.
+- [references/session-docs.md](references/session-docs.md) and [references/controller-playbook.md](references/controller-playbook.md): session/run layout and operational examples.
+- Situational contracts: [identity/reattachment](references/identity-reattach.md), [rotation](references/rotation.md), [retirement/promotion](references/retire-promote.md), [run-state API](references/run-state-api.md), and [pane environment](references/pane-environment.md).
+- [docs/herdr-cheatsheet.md](docs/herdr-cheatsheet.md): CLI/adapter examples; check installed help before live use.
+- [scripts/](scripts/): executable adapters, importable modules, and colocated stdlib `test_*.py` suites.
+
+Implementation boundaries:
+
+| Modules | Responsibility |
+| --- | --- |
+| [run_state.py](scripts/run_state.py) | Stable controller-facing import facade; adapters import defining modules directly. |
+| [session_docs.py](scripts/session_docs.py) | Canonical session paths, metadata/run binding, templates, and carry-forward. |
+| [ledger.py](scripts/ledger.py), [authz.py](scripts/authz.py) | Event/revision validation, replay, receipt validation, immutable dispatch snapshots, caches, locks, and exact-holder dispatch guards. |
+| [graph_model.py](scripts/graph_model.py), [ownership.py](scripts/ownership.py) | Graph/identity schema and path-ownership classification. |
+| [artifacts.py](scripts/artifacts.py), [receipts.py](scripts/receipts.py) | Attempt prompt/consumed-artifact handling and receipt interfaces; receipt validators are defined in `ledger.py`. |
+| [routing.py](scripts/routing.py), [liveness.py](scripts/liveness.py), [context_usage.py](scripts/context_usage.py) | Model policy, identity/live observation, native inventory, and measured OMP context validation. |
+| [promotion.py](scripts/promotion.py), [scheduler.py](scripts/scheduler.py) | Promotion/recovery/create-only delivery and lifecycle reconciliation/notifications. |
+| [ioutil.py](scripts/ioutil.py), [cli_common.py](scripts/cli_common.py), [herdr_cli.py](scripts/herdr_cli.py) | Atomic I/O and deadline-bound Git, adapter/child boundaries, and the single Herdr subprocess/confirmed-prompt boundary. |
+
+Optional visuals, not execution procedures: [index](docs/diagrams/visual/index.html), [orchestration loop](docs/diagrams/herdr-orchestration-loop.html), and [dynamic orchestration](docs/diagrams/herdr-dynamic-orchestration.html).

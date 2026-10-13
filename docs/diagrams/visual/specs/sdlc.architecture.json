@@ -1,0 +1,415 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Herdr SDLC Workflow",
+    "subtitle": "Plan, implement, verify, review, deliver, and the Herdr runtime that executes each phase.",
+    "animation": "none",
+    "visual_preset": "blueprint",
+    "quality_profile": "showcase",
+    "viewBox": [
+      872,
+      500
+    ],
+    "views": [
+      {
+        "id": "sdlc-main",
+        "label": "Engineering phases",
+        "focus": [
+          "sdlc-plan",
+          "sdlc-implement",
+          "sdlc-verify",
+          "sdlc-review",
+          "sdlc-deliver"
+        ],
+        "note": "Plan the contract, implement isolated slices, verify the integrated result, review evidence, then deliver."
+      },
+      {
+        "id": "sdlc-runtime",
+        "label": "Herdr underneath",
+        "focus": [
+          "sdlc-accept",
+          "sdlc-dispatch",
+          "sdlc-integration",
+          "sdlc-receipts",
+          "sdlc-promotion"
+        ],
+        "note": "Graph, identity, ownership, receipt and promotion integrity are scripted; correctness checks remain explicit."
+      },
+      {
+        "id": "sdlc-feedback",
+        "label": "Failure and rework",
+        "focus": [
+          "sdlc-implement",
+          "sdlc-verify",
+          "sdlc-review",
+          "sdlc-rework"
+        ],
+        "note": "Failed checks or findings return to implementation, followed by verification and review."
+      }
+    ]
+  },
+  "layout": {
+    "mode": "grid",
+    "origin": [
+      44,
+      24
+    ],
+    "cols": 6,
+    "cellW": 104,
+    "cellH": 60,
+    "gapX": 32,
+    "gapY": 88
+  },
+  "components": [
+    {
+      "id": "sdlc-rework",
+      "row": 0,
+      "col": 2,
+      "type": "security",
+      "size": [
+        104,
+        60
+      ],
+      "label": "Rework",
+      "sublabel": "Fix, reverify",
+      "tag": "Review again"
+    },
+    {
+      "id": "sdlc-plan",
+      "row": 1,
+      "col": 0,
+      "type": "frontend",
+      "size": [
+        104,
+        60
+      ],
+      "label": "Plan",
+      "sublabel": "Scope + graph",
+      "tag": "Controller"
+    },
+    {
+      "id": "sdlc-implement",
+      "row": 1,
+      "col": 1,
+      "type": "backend",
+      "size": [
+        104,
+        60
+      ],
+      "label": "Implement",
+      "sublabel": "Slices + commits",
+      "tag": "Writers"
+    },
+    {
+      "id": "sdlc-verify",
+      "row": 1,
+      "col": 2,
+      "type": "security",
+      "size": [
+        104,
+        60
+      ],
+      "label": "Verify",
+      "sublabel": "Exercise changes",
+      "tag": "Explicit proof"
+    },
+    {
+      "id": "sdlc-review",
+      "row": 1,
+      "col": 3,
+      "type": "security",
+      "size": [
+        104,
+        60
+      ],
+      "label": "Review",
+      "sublabel": "Requirements",
+      "tag": "Reviewer"
+    },
+    {
+      "id": "sdlc-deliver",
+      "row": 1,
+      "col": 4,
+      "type": "cloud",
+      "size": [
+        104,
+        60
+      ],
+      "label": "Deliver",
+      "sublabel": "Feature branch",
+      "tag": "Controller"
+    },
+    {
+      "id": "sdlc-external-release",
+      "row": 1,
+      "col": 5,
+      "type": "external",
+      "size": [
+        104,
+        60
+      ],
+      "label": "PR / Release",
+      "sublabel": "Outside skill"
+    },
+    {
+      "id": "sdlc-accept",
+      "row": 2,
+      "col": 0,
+      "type": "database",
+      "size": [
+        104,
+        60
+      ],
+      "label": "Bind + Accept",
+      "sublabel": "Run, DAG, base",
+      "tag": "init + accept_graph"
+    },
+    {
+      "id": "sdlc-dispatch",
+      "row": 2,
+      "col": 1,
+      "type": "messagebus",
+      "size": [
+        104,
+        60
+      ],
+      "label": "Dispatch",
+      "sublabel": "Worktree, prompt",
+      "tag": "Confirmed delivery"
+    },
+    {
+      "id": "sdlc-integration",
+      "row": 2,
+      "col": 2,
+      "type": "backend",
+      "size": [
+        104,
+        60
+      ],
+      "label": "Integrate",
+      "sublabel": "Apply + exercise",
+      "tag": "No automatic merge"
+    },
+    {
+      "id": "sdlc-receipts",
+      "row": 2,
+      "col": 3,
+      "type": "database",
+      "size": [
+        104,
+        60
+      ],
+      "label": "Evidence",
+      "sublabel": "VCS receipts",
+      "tag": "finish-agent"
+    },
+    {
+      "id": "sdlc-promotion",
+      "row": 2,
+      "col": 4,
+      "type": "cloud",
+      "size": [
+        104,
+        60
+      ],
+      "label": "Promote",
+      "sublabel": "CAS + branch",
+      "tag": "No primary checkout"
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "SDLC phases",
+      "wraps": [
+        "sdlc-plan",
+        "sdlc-implement",
+        "sdlc-verify",
+        "sdlc-review",
+        "sdlc-deliver",
+        "sdlc-external-release"
+      ],
+      "pad": 36
+    },
+    {
+      "kind": "region",
+      "label": "Herdr runtime",
+      "wraps": [
+        "sdlc-accept",
+        "sdlc-dispatch",
+        "sdlc-integration",
+        "sdlc-receipts",
+        "sdlc-promotion"
+      ],
+      "pad": 36
+    }
+  ],
+  "connections": [
+    {
+      "id": "sdlc-plan-implement",
+      "from": "sdlc-plan",
+      "to": "sdlc-implement",
+      "variant": "emphasis"
+    },
+    {
+      "id": "sdlc-implement-verify",
+      "from": "sdlc-implement",
+      "to": "sdlc-verify",
+      "variant": "emphasis"
+    },
+    {
+      "id": "sdlc-verify-review",
+      "from": "sdlc-verify",
+      "to": "sdlc-review",
+      "variant": "emphasis"
+    },
+    {
+      "id": "sdlc-review-deliver",
+      "from": "sdlc-review",
+      "to": "sdlc-deliver",
+      "variant": "emphasis"
+    },
+    {
+      "id": "sdlc-deliver-release",
+      "from": "sdlc-deliver",
+      "to": "sdlc-external-release",
+      "variant": "dashed"
+    },
+    {
+      "id": "sdlc-plan-mechanics",
+      "from": "sdlc-plan",
+      "to": "sdlc-accept",
+      "variant": "dashed"
+    },
+    {
+      "id": "sdlc-implement-mechanics",
+      "from": "sdlc-implement",
+      "to": "sdlc-dispatch",
+      "variant": "dashed"
+    },
+    {
+      "id": "sdlc-verify-mechanics",
+      "from": "sdlc-verify",
+      "to": "sdlc-integration",
+      "variant": "dashed"
+    },
+    {
+      "id": "sdlc-review-mechanics",
+      "from": "sdlc-review",
+      "to": "sdlc-receipts",
+      "variant": "dashed"
+    },
+    {
+      "id": "sdlc-deliver-mechanics",
+      "from": "sdlc-deliver",
+      "to": "sdlc-promotion",
+      "variant": "dashed"
+    },
+    {
+      "id": "sdlc-check-failure",
+      "from": "sdlc-verify",
+      "to": "sdlc-rework",
+      "variant": "security",
+      "label": "Failed checks",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "sdlc-review-findings",
+      "from": "sdlc-review",
+      "to": "sdlc-rework",
+      "variant": "security",
+      "label": "Findings",
+      "fromSide": "top",
+      "toSide": "right",
+      "labelSegment": 2
+    },
+    {
+      "id": "sdlc-rework-return",
+      "from": "sdlc-rework",
+      "to": "sdlc-implement",
+      "variant": "dashed",
+      "fromSide": "left",
+      "toSide": "top"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Plan: make the engineering contract explicit",
+      "items": [
+        "Controller investigates the target repository and defines scope, acceptance criteria, non-goals, interfaces and runnable verification before dispatch.",
+        "init-docs.py binds canonical session/run paths under the target docs root. docs/sessions/ and docs/runs/ must be Git-ignored.",
+        "accept_graph(run, graph, repo, holder) pins repo, immutable base_sha and refs/heads/herdr/<run-id>; validates nodes, aliases, dependencies, cycles and concurrent path ownership.",
+        "depends_on controls ordering; inputs declares exact consumed outputs. Ordering alone neither transfers code nor records artifact consumption.",
+        "Represent verification/review responsibilities explicitly in prompts and graph dependencies. There is no mandatory hardcoded PLAN/IMPLEMENT/VERIFY/REVIEW pipeline.",
+        "Source: scripts/init-docs.py:57-101; scripts/run_state.py:301-402,659-717."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Implement: controller dispatches, writers own slices",
+      "items": [
+        "Reconcile computes ready only after dependencies succeeded and required inputs exist. The active controller supplies exact workspace/pane/session holder and current epoch.",
+        "dispatch-agent.py records dispatch_intent once, snapshots consumed hashes and owns, then invokes spawn-agent.py --resume under dispatch_guard.",
+        "Independent writers use disjoint owned paths and separate worktrees based on the accepted base SHA. Shared files require dependency ordering; dependencies do not automatically populate worker worktrees.",
+        "New managed workers receive immutable fo- worker_id identities. launch-intent, dispatch-identity, prompt-attempt and launch-complete sidecars preserve crash evidence.",
+        "Prompt metadata includes canonical attempt_dir plus consumed artifact paths/hashes; engineering instructions, tests and review requirements remain controller-authored.",
+        "Delivery waits for observed working state. A composer stall gets one sanctioned Enter and another observation; an unstarted worker is blocked, not silently successful.",
+        "Source: scripts/dispatch-agent.py:154-225; scripts/run_state.py:1078-1122; scripts/herdr_cli.py:113-144."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Verify: prove behavior, not merely worker settlement",
+      "items": [
+        "Writers exercise their changed path and relevant regressions, report commands/results and commit before normal completion. The controller evaluates evidence against acceptance criteria.",
+        "monitor-agents.py runs as a background observer with a harness completion wakeup and/or --notify-pane. Herdr idle/done/blocked is observation, never authoritative success.",
+        "finish-agent.py requires the active holder and current attempt, clean worktree, HEAD ancestry and owned changes; publishes declared hashed attempt-local summary/VCS artifacts.",
+        "A declared worktree with no new commit is refused unless --force deliberately records the empty result. Force replacements are audited, not a rewrite of terminal success history.",
+        "The integrator explicitly applies producer changes in a separate worktree, resolves conflicts and runs verification on the combined result. No script performs the merge/cherry-pick for it.",
+        "The scripts do not run tests or score acceptance evidence. Tests and runtime checks must actually be executed by the assigned agents/controller.",
+        "Source: scripts/finish-agent.py:199-314; scripts/monitor-agents.py:160-198."
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Review: a real engineering gate, not a receipt check",
+      "items": [
+        "Use a read-only reviewer to inspect the resulting implementation, requirement coverage, risks, edge cases and the observed verification evidence.",
+        "A useful review verdict distinguishes actionable findings from approval and identifies affected paths and required corrections. The controller decides whether the acceptance contract is satisfied.",
+        "Findings return to implementation, followed by renewed verification and review. A graph node's succeeded state is not a built-in semantic review approval.",
+        "Scheduling matters: a depends_on edge waits for producer succeeded, and an integrator becomes succeeded only after promotion. Pre-promotion review must be arranged explicitly while integration is held, rather than pretending an ordinary dependency provides it.",
+        "The controller can run bounded pre-promotion review against the integrator worktree/commit, then finish/promote only after the verdict is accepted; a graph-tracked post-promotion review can instead gate final branch delivery.",
+        "Receipt hashes establish lineage and integrity. Integration consumed hashes do not prove producer changes are present or correct in the final HEAD.",
+        "Source: scripts/run_state.py:1359-1401,1418-1459,1462-1473."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Deliver: promotion is separate from human-facing publication",
+      "items": [
+        "Writer/read-only finish records succeeded after declared artifact gates. Integrator finish writes integration receipts and prints the exact run_state.promote(...) call without recording succeeded.",
+        "promote validates integration/VCS receipts and exact holder/repo, refuses a checked-out promotion ref, records promotion_intent, CAS-updates only refs/heads/herdr/<run-id>, then records promoted and succeeded.",
+        "Final branch delivery requires every accepted node succeeded or skipped plus a promoted-and-succeeded integration commit. Default is feature/<slug of job>; creation is create-only and an existing different SHA is refused.",
+        "Promotion may automatically attempt final branch publication; publication failure does not undo completed promotion. deliver_branch(...) is the explicit terminal publication API.",
+        "Report the delivered SHA/branch and exercised acceptance evidence. Pushing, PR creation, merge to main, release and deployment are outside the skill.",
+        "Source: scripts/run_state.py:2338-2455."
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Authority, routing and recovery across every phase",
+      "items": [
+        "events.jsonl is execution authority. state.json, controller.json and status.md are derived caches; progress/HANDOFF/NEXT are orientation and handoff notes, not success markers.",
+        "Native task/workflow executors are bounded and session-local; herdr-agent workers survive controller rotation; pane executors address existing user-owned surfaces and are never retired.",
+        "A live blocked worker may resume the same attempt after exact identity/token verification. The controller appends the returned attempt_started descriptor; do not create a second launch intent.",
+        "Failed/interrupted/invalidated retries use a new authorized attempt and immutable attempt directory. Native failed/interrupted retry additionally requires side_effect_safe=true.",
+        "Rotation is controller-triggered: rotate.py first verifies fresh same-process OMP current tokens/contextWindow >=0.5, otherwise refuses exit3 before drain/reconcile/spawn; then drain/quiescence and nonce ack, ack-handoff.py transfers the lease and increments epoch, then exact live Herdr identities are reattached.",
+        "Retire only orchestrator-owned terminal surfaces after matching identity and downstream integration receipts. Never close user panes, stop the server or discard worktrees on promotion failure.",
+        "Source: scripts/run_state.py:1754-1785,2546-2555; scripts/rotate.py; scripts/ack-handoff.py; scripts/retire-agents.py."
+      ]
+    }
+  ]
+}
