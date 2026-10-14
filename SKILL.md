@@ -43,7 +43,7 @@ Lock-taking entrypoints accept `--lock-timeout SECONDS`: finite positive, defaul
 Use absolute `RUN`, `SESSION`, repository paths and concrete holder `H={"workspace": W, "pane": P, "session": SESSION}`; `E` is the replayed epoch. Commands below use `python3 scripts/`.
 
 1. Open: `init-docs.py --dir docs --job JOB`; use returned canonical session/run, not informational symlinks.
-2. Accept: `run_state.accept_graph(RUN, graph, repo=REPO, holder=H)` after planning dependencies, ownership, outputs, executors and routing; wait for acceptance before dispatch.
+2. Accept: `run_state.accept_graph(RUN, graph, repo=REPO, holder=H)` after planning dependencies, ownership, outputs, executors and routing; wait for acceptance before dispatch. The returned `base_sha` is authoritative (`HEAD` of the supplied `repo` at first acceptance; a `base_sha` submitted in the graph is ignored): verify it against the commit the briefs assume before dispatch. Continuing a previous candidate in a fresh writer: [accepted base and continuation](references/controller-playbook.md#211-accepted-base-and-continuing-a-previous-candidate).
 3. Reconcile: `reconcile.py --run RUN`; add `--session SESSION --holder-workspace W --holder-pane P` for observation/lifecycle and `--notify` for edge notifications.
 4. Dispatch: `dispatch-agent.py --run RUN --node NODE --session SESSION --holder-workspace W --holder-pane P --epoch E --prompt-file FILE`; contextual writers derive branch/base from the graph, read-only workers may add `--cwd DIR`.
 5. Monitor: `monitor-agents.py TARGET... --notify-pane P --label RUN_ID`; use an auto-delivering harness job and/or pane notification, not a detached file-only process.

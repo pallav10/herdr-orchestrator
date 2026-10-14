@@ -26,7 +26,7 @@ tool, not from inside a cell that can fail later).
 
 Return shapes differ (hit `KeyError: 'nodes'` twice): `reconcile()` → `{"state","controller","notified"}`;
 `promote()`/`append_event()` → `{"state": ...}`; `accept_graph()` → the accepted graph document
-(`schema_version`, `run`, `base_sha`, `promotion_ref`, `nodes`); `load_run()` → the run document without node state. `run_state.load_state(RUN)` is the one read path for node state.
+(`schema_version`, `run`, `base_sha`, `promotion_ref`, `nodes`; `base_sha` is the authoritative run base, see §2.1.1); `load_run()` → the run document without node state. `run_state.load_state(RUN)` is the one read path for node state.
 
 ## 2. Wave lifecycle
 
@@ -68,6 +68,45 @@ commits and uses `vcs.result.form: "none"` (HEAD must descend from `base_sha` an
 Adding a wave: `g2 = copy.deepcopy(graph); g2["nodes"].update(new_nodes); run_state.validate_graph(g2);
 run_state.accept_graph(RUN, g2, repo=REPO, holder=HOLDER); run_state.reconcile(RUN, holder=HOLDER)` → new
 writers are `ready`, nodes with unmet `depends_on` are `planned`.
+
+### 2.1.1 Accepted base and continuing a previous candidate
+
+`accept_graph` does not use a submitted `base_sha`: it is ignored, not validated, and a mismatch is not refused. The first acceptance records `HEAD` of the supplied canonical `repo` as the run's immutable base; later acceptances return that recorded value. Contextual writer/integrator worktrees are created at the returned `base_sha`, and collection requires every commit to descend from it. After every acceptance, compare `accepted["base_sha"]` with the commit the briefs assume **before the first dispatch**. On mismatch, do not dispatch: retarget the briefs to the accepted base or start a new run from a repository at the intended commit. Never move or reset the primary checkout to change an existing run's base.
+
+A fresh writer continues a previous verified candidate `CAND` (its `vcs.json` `result.sha`, built on `CAND_BASE`) only if its isolated worktree actually contains the candidate; `depends_on` and `inputs` order work and record consumption but never transfer code.
+
+- Promoted in this run: the new node `depends_on` the integrator and declares its `integration` output in `inputs` (consumption is recorded and requires the promoted `integration.json`); Step 0 is `git reset --hard <promoted sha>`. The ownership baseline is then the promoted line, so `owns` covers only new edits.
+- Not promoted (earlier run, failed or unpromoted attempt): cherry-pick `CAND_BASE..CAND` onto the accepted base and make `owns` cover every inherited path before acceptance. The baseline is the base, so cherry-picked paths count as this node's changes and an uncovered one fails the `finish-agent.py` ownership gate. Use `git reset --hard CAND` in the fresh isolated worktree only when `CAND_BASE == BASE` and `BASE` is an ancestor of `CAND`; ancestry alone can import unreviewed changes between `BASE` and `CAND_BASE`. `CAND` must exist in the run repository's object store (fetch it first if it came from another clone).
+
+```python
+import fnmatch
+
+CAND, CAND_BASE = "<verified candidate sha>", "<sha it was built on>"
+EXPECTED_BASE = "<committed base the briefs assume>"
+inherited = git(REPO, "diff", "--name-only", "-z", CAND_BASE, CAND).split("\0")
+uncovered = [path for path in inherited if path and
+             not any(fnmatch.fnmatch(path, pattern) for pattern in graph["nodes"][NODE]["owns"])]
+if uncovered:
+    raise ValueError(f"owns does not cover inherited paths: {uncovered}")
+accepted = run_state.accept_graph(RUN, graph, repo=REPO, holder=HOLDER)
+BASE = accepted["base_sha"]                      # authoritative; graph["base_sha"] is not an input
+if BASE != EXPECTED_BASE:
+    raise ValueError("accepted base differs from the briefs; do not dispatch")
+step0 = f"""set -e
+test "$(git rev-parse HEAD)" = {BASE} || {{ echo 'worktree is not at the accepted base'; exit 1; }}
+git cherry-pick {CAND_BASE}..{CAND}              # on conflict stop and report; do not improvise
+python3 - <<'PY'
+import re
+import subprocess
+diff = subprocess.check_output(["git", "range-diff", "--no-color", "{CAND_BASE}..{CAND}", "{BASE}..HEAD"], text=True)
+print(diff, end="")
+if not diff.strip() or any(not re.match(r"^\\s*\\d+:\\s+\\S+\\s+=\\s+\\d+:", row) for row in diff.splitlines()):
+    raise SystemExit("candidate commit series changed; stop for review")
+PY
+"""
+```
+
+Put `step0` first in the brief; it fails closed if the worktree is not at the accepted base instead of repairing from the wrong commit.
 
 ### 2.2 Dispatch
 

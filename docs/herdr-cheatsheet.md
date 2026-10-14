@@ -996,7 +996,7 @@ Python APIs in `scripts/run_state.py` (not a CLI) that the flow below calls:
 
 | Call | Notes |
 |---|---|
-| `accept_graph(run, graph, *, repo, holder=None, lock_timeout=120)` | Accepts the graph; sets `promotion_ref` to `refs/heads/herdr/<run-id>`; requires the exact holder once bound. |
+| `accept_graph(run, graph, *, repo, holder=None, lock_timeout=120)` | Accepts the graph; sets `promotion_ref` to `refs/heads/herdr/<run-id>`; requires the exact holder once bound. The returned `base_sha` is authoritative (`HEAD` of the supplied `repo` at first acceptance); a `base_sha` in the submitted graph is ignored — check it before dispatch. |
 | `promote(run, *, node, attempt, new_sha, repo, holder=None, lock_timeout=120)` | Returns `{state, controller, event}` plus either no delivery keys (ref moved → blocked), `{delivery_branch, sha, created}`, or `{delivery_branch: None, delivery_note}`. Refuses a checked-out promotion ref. |
 | `deliver_branch(run, *, repo, holder=None, branch=None, lock_timeout=120)` | Create-only human branch after the whole graph is `succeeded`/`skipped`; refuses `refs/heads/herdr/<run-id>`. |
 | `replay(run)` | `{state, controller, events, skipped_stale, truncated_tail}` |

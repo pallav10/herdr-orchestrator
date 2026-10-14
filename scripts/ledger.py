@@ -159,7 +159,8 @@ def _committed_graph_revision(run_dir: Path, events: list[dict[str, Any]] | None
     return committed
 
 
-def load_graph(run_dir: Path) -> dict[str, Any]:
+def load_graph(run_dir: str | Path) -> dict[str, Any]:
+    run_dir = Path(canonical_path(run_dir))
     committed = _committed_graph_revision(run_dir)
     return _graph_from_revision(run_dir, committed)
 
@@ -174,8 +175,7 @@ def _graph_from_revision(run_dir: Path, committed: dict[str, Any] | None) -> dic
 
 def load_accepted_graph(run_dir: str | Path) -> dict[str, Any]:
     """Read the accepted graph through committed revisions, never its derived cache alone."""
-    graph = load_graph(Path(canonical_path(run_dir)))
-    return graph
+    return load_graph(run_dir)
 
 
 def load_accepted_node(run_dir: str | Path, node_id: str) -> dict[str, Any]:

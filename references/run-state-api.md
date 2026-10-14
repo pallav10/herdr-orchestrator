@@ -2,7 +2,7 @@
 
 Import `run_state` with `scripts/` on the Python path. It is the explicit controller-facing facade; defining modules are `ioutil`, `graph_model`, `ledger`, `authz`, `artifacts`, `receipts`, `routing`, `liveness`, `promotion`, `scheduler`, and `cli_common`. Production scripts use their defining modules rather than private facade imports. The facade is not a second state authority or compatibility framework.
 
-`RUN`, `SESSION` and `REPO` below are canonical absolute paths; holder `H` has exact `workspace`, `pane`, and canonical `session`. Errors are `UsageError`, `PreconditionError`, or `RunError`. CLI mapping is in [SKILL.md](../SKILL.md).
+`RUN`, `SESSION` and `REPO` below are canonical absolute paths; the read APIs (`load_run`, `load_graph`, `replay`, `load_state`) accept `RUN` as `str` or `Path` and canonicalize it, and raise `UsageError` for a relative path. Holder `H` has exact `workspace`, `pane`, and canonical `session`. Errors are `UsageError`, `PreconditionError`, or `RunError`. CLI mapping is in [SKILL.md](../SKILL.md).
 
 ## Reads and initialization
 
@@ -19,7 +19,7 @@ Import `run_state` with `scripts/` on the Python path. It is the explicit contro
 
 State has `schema_version`, `run`, `epoch`, `nodes`, `notified`, `dispatch`; nodes carry executor/attempt/state, reason/question, recorded routing/handle, artifacts and immutable dispatch/consumption history. Controller has `epoch`, `workspace`, `pane`, `session`, `run`, `dispatch`, `lease`. Applied `events` omit skipped stale post-transfer mutations; replay preserves valid pre-transfer history. Notification keys are sorted/unique; do not confuse the full state notification history with notifications emitted by the current call.
 
-Acceptance validates IDs (`[A-Za-z0-9][A-Za-z0-9._-]{0,31}`), unique aliases, dependency graph, serialized ownership overlaps and contained artifact paths, exact holder and canonical repository. It records immutable base and initializes the run-owned promotion ref once through recoverable committed graph revisions. Active nodes retain all accepted fields except metadata-only `phase`; revisions compare accepted plans rather than concrete runtime model/handle overlays. Acceptance must finish before any dispatch.
+Acceptance validates IDs (`[A-Za-z0-9][A-Za-z0-9._-]{0,31}`), unique aliases, dependency graph, serialized ownership overlaps and contained artifact paths, exact holder and canonical repository. It records the immutable base — `HEAD` of the supplied canonical `repo` at first acceptance, the recorded value afterwards — and initializes the run-owned promotion ref once through recoverable committed graph revisions. A `base_sha` submitted in the graph does not select or validate the base and a mismatch is not refused; read the returned `base_sha` and compare it with the commit the briefs assume before any dispatch (see [continuing a previous candidate](controller-playbook.md#211-accepted-base-and-continuing-a-previous-candidate)). Active nodes retain all accepted fields except metadata-only `phase`; revisions compare accepted plans rather than concrete runtime model/handle overlays. Acceptance must finish before any dispatch.
 
 `session_docs.session_run(session)` is the shared metadata run resolver (not a markdown parser): canonical absolute binding, same-docs-root containment, valid run metadata. Initializer absence/backfill and deferred successor binding have distinct policies documented in [session-docs](session-docs.md) and [rotation](rotation.md).
 
