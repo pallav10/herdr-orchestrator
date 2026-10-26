@@ -165,6 +165,8 @@ python3 -m unittest discover -s scripts -p 'test_run_state.py'
 python3 scripts/prompt_contract.py
 ```
 
+Context-exporter checks load the bundled `extensions/herdr-context.ts` by default, not an extension in the operator's home directory. `HERDR_TEST_OMP_EXTENSION` explicitly selects an alternate exporter for compatibility checks; Bun is required for these scenarios. Model refresh uses the extension-facing `retry_fallback_applied` hook; OMP's session-level `model_changed` notification is not an extension hook.
+
 ## Layout
 
 - [SKILL.md](SKILL.md): operator contract and orchestration loop.
