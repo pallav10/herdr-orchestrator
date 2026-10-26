@@ -2,6 +2,7 @@
 """Initialize per-session orchestrator docs without mutating prior sessions.
 
 Usage: init-docs.py [--dir docs] [--job NAME] [--new] [--run PATH] [--lock-timeout SECONDS]
+       [--pane TARGET ...]
 
 Opens a session under --dir/sessions/<id>/. progress.md is a fresh run-pointer
 stub; HANDOFF.md and NEXT-SESSION-PROMPT.md may carry prose forward from the
@@ -16,6 +17,8 @@ or recent note timestamps. Invalid acknowledgment metadata exits 3.
 The printed `session` and `run` paths are canonical absolute values for this pane;
 docs/sessions/latest is an informational pointer that nothing should resolve.
 Exit codes: 0 ok, 1 runtime failure, 2 usage, 3 precondition/refusal.
+Use --pane once per planned user-owned pane to check live stable identity support
+before creating or binding run/session metadata. This does not enroll the pane.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ import sys
 
 import ioutil
 import cli_common
+from herdr_cli import herdr, runtime_agent_id
 
 CLI_EXTRA_CODES = {RuntimeError: 1}
 import session_docs
@@ -90,6 +94,8 @@ def main() -> int:
     parser.add_argument("--job", default=None, help="job label for substitutions")
     parser.add_argument("--new", action="store_true", help="force a fresh session")
     parser.add_argument("--run", default=None, help="existing run directory to bind")
+    parser.add_argument("--pane", action="append", default=[], metavar="TARGET",
+                        help="preflight each planned user-owned pane before metadata writes")
     cli_common.add_lock_timeout_arg(parser)
     args = parser.parse_args()
 
@@ -102,6 +108,12 @@ def main() -> int:
     job = (args.job or Path.cwd().name).strip()
     if not job:
         parser.error("--job resolved to an empty value")
+
+    for target in args.pane:
+        payload = herdr("agent", "get", target)
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        agent = result.get("agent") if isinstance(result.get("agent"), dict) else result
+        runtime_agent_id(agent, target)
 
     result = session_docs.open_session(
         target_dir, job=job, template_dir=template_dir, force_new=args.new, run=args.run,

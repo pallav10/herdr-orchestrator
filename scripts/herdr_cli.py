@@ -13,6 +13,23 @@ from cli_common import token_flag
 from graph_model import PROVENANCE_ORCHESTRATOR
 
 
+def runtime_agent_id(agent: dict[str, Any], target: str) -> str:
+    """Require the server-issued identity used by user-owned pane dispatch."""
+    agent_id = ioutil.first_str(agent, ("agent_id", "id"))
+    if not agent_id:
+        raise ioutil.PreconditionError(
+            f"live agent missing stable id for {target}: user-owned pane dispatch "
+            "requires server-issued agent_id/id; terminal_id, agent_session, names "
+            "and pane addresses are not supported replacement-safe identities. "
+            "Preflight with init-docs.py --pane TARGET before creating metadata. "
+            "Restoring dispatch to this existing pane requires upstream Herdr "
+            "agent-incarnation identity and identity-conditional prompt delivery; "
+            "see references/identity-reattach.md#required-upstream-agent-incarnation-contract. "
+            "Preflight refusal or creating a managed worker does not restore this pane."
+        )
+    return agent_id
+
+
 
 TIMEOUT = ioutil.SUBPROCESS_TIMEOUT
 READ_TIMEOUT = 10

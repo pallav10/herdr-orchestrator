@@ -18,6 +18,8 @@ provenance=orchestrator. Pane may keep user provenance. Initial herdr-agent
 launch and wrong state/attempt are refused before metadata or prompt
 mutation. Shared prepare_dispatch_prompt is injected; pane stamps only
 run/node/attempt (never provenance).
+Initial pane dispatch persists launch-intent.json before metadata or prompt
+mutation, freezing the accepted plan even if delivery fails.
 Dispatched text goes through prepare_prompt; a leading bare `orchestrate`
 line is on by default. Override with --orchestrate / --no-orchestrate.
 Delivery is confirmed, not assumed: the prompt is submitted with
@@ -44,12 +46,11 @@ import cli_common
 
 CLI_EXTRA_CODES = {RuntimeError: 1}
 import ledger
-from herdr_cli import deliver_prompt, herdr, stamp_workspace_tokens
+from herdr_cli import deliver_prompt, herdr, runtime_agent_id, stamp_workspace_tokens
 from prompt_contract import prepare_prompt
 from graph_model import AGENT_NAME_RE
 from cli_common import agent_pane_id, agent_workspace_id, run_context, token_value, validate_auth_args, workspace_pane_id
 from liveness import recorded_herdr_identity
-from ioutil import first_str
 from routing import routing_for
 
 
@@ -231,10 +232,7 @@ def live_herdr_raw(target: str, identity_kind: str) -> dict[str, Any]:
             raise ioutil.PreconditionError(f"live agent missing name for {target}")
         identity["worker_id"] = name
     else:
-        agent_id = first_str(agent, ("agent_id", "id"))
-        if not agent_id:
-            raise ioutil.PreconditionError(f"live agent missing stable id for {target}")
-        identity["agent"] = agent_id
+        identity["agent"] = runtime_agent_id(agent, target)
     return identity
 
 
@@ -272,6 +270,9 @@ def _verify_herdr_identity(run, node_id, attempt, node, loaded, parser):
 
 def _verify_pane_identity(name, run, node_id, node, parser):
     """Legacy pane/agent identity: the live handle must match the recorded one."""
+    stored = (node.get("handle") or {}).get("name")
+    if isinstance(stored, str) and stored and stored != name:
+        parser.error("pane handle name does not match the current accepted plan")
     identity = live_herdr_raw(name, graph_model.IDENTITY_RUNTIME_ID)
     recorded = recorded_herdr_identity({"run": str(run)}, node_id, node, strict=True)
     match_recorded_identity(recorded, identity, parser, required=recorded["identity_file"])
@@ -359,7 +360,10 @@ def main() -> int:
             with authz.dispatch_guard(
                 run, node_id, int(attempt), holder=holder, epoch=epoch, continuation=continuation,
                 lock_timeout=args.lock_timeout,
-            ):
+            ) as guarded:
+                node = guarded["state"]["nodes"][node_id]
+                if node.get("executor") != kind:
+                    raise ioutil.PreconditionError("executor changed before dispatch; reload the accepted plan")
                 if kind == "herdr-agent":
                     target, identity = _verify_herdr_identity(run, node_id, attempt, node, loaded, parser)
                 else:
@@ -386,6 +390,18 @@ def main() -> int:
                 if continuation:
                     candidate = continuation_event(node_id, attempt, node, identity, identity["routing"])
                     identity["routing"] = candidate["live_identity"]["routing"]
+                if kind == "pane" and not continuation:
+                    intent_path = ledger.attempt_dir(run, node_id, int(attempt)) / "launch-intent.json"
+                    if not intent_path.exists():
+                        try:
+                            ioutil.atomic_json(intent_path, {
+                                "executor": "pane", "run": str(run), "node": node_id,
+                                "attempt": int(attempt), "name": target,
+                                "workspace": identity["workspace"], "pane": identity["pane"],
+                                "agent": identity["agent"],
+                            })
+                        except OSError as exc:
+                            raise ioutil.RunError(f"cannot persist pane launch intent {intent_path}: {exc}") from exc
                 stamp_workspace_tokens(
                     identity["workspace"], identity["run_id"], identity["node"], identity["attempt"],
                     invoke=herdr,
