@@ -2,6 +2,46 @@
 
 Practical controller examples complement [SKILL.md](../SKILL.md) and the [reference index](../README.md#layout). Runtime contracts live in the linked references, not in historical examples.
 
+## Native existing-pane playbook
+
+Use this lightweight path for bounded user-authorized work in an existing pane. It is not durable graph execution: no lease, replacement-safe agent identity, receipt, promotion, or graph-success claim follows from a native prompt. If those guarantees are required, use the supported durable contract or report its missing prerequisite; do not substitute this path for a graph node.
+
+The following commands illustrate the session's successful read-only analysis. Substitute the explicitly authorized target and absolute report path. Run them only after validating the returned JSON, not as an unattended script:
+
+```sh
+test "${HERDR_ENV:-}" = 1
+test -S "${HERDR_SOCKET_PATH:?select the intended Herdr socket first}"
+herdr --session flowops status server
+herdr --session flowops agent get w4E:p0
+```
+
+Check that the socket is the selected `flowops` endpoint, the protocol is compatible, and `agent get` matches the exact live name (`qrp-services` in this example), workspace/pane, expected repository/cwd and readiness. Use an exact explicit target, or `--current` only where installed help supports it and the user authorized the current pane; never choose a pane from sidebar order or implicit focus. These checks establish the intended current target, not an immutable runtime ID.
+
+```sh
+herdr --session flowops agent prompt w4E:p0 \
+  'Read-only analysis: analyze every PR comment, make no source edits, and write the complete report to /absolute/report.md. State coverage and unresolved items.' \
+  --wait --until working --timeout 15000
+```
+
+Confirm the returned state is `working`. Start the following **once through the host's auto-delivering background-job facility**, then do independent work; do not run it synchronously here or replace it with status loops:
+
+```sh
+herdr --session flowops agent wait w4E:p0 --timeout 1200000
+```
+
+After the wait delivers a settled result, read the exact report with the file-reading tool and inspect a short pane tail:
+
+```sh
+herdr --session flowops agent read w4E:p0 --source recent --lines 40
+```
+
+Verify report coverage against the requested inventory, not merely an idle/done state or a nonempty report. The user-reported successful workflow covered all 90 PR comments without source edits; that observation does not certify future runs. One auto-delivering wait or edge notification is enough. A wait timeout is not completion: inspect the evidence once and report what remains unknown.
+
+If delivery is uncertain, never resubmit the full prompt. Inspect the pane/report and structured errors first; inspect blocked approval/question states before sending any keys. Do not automate Enter recovery here, steal focus, restart the server, close user-owned surfaces, or reinterpret terminal/session/name/pane fields as immutable agent IDs. Cache installed help and verified facts; bare groups can return exit 2 while printing help, so independent discovery probes must not be chained with `&&`.
+
+For implementation rather than read-only analysis, preserve the primary checkout and use an authorized feature branch or isolated worktree before edits. Verify the actual changed behavior and review the diff before committing or pushing only the work the user authorized; a request to analyze is not permission to edit, commit or push. Durable parallel writers still require graph ownership/isolation and their real supported identity contract.
+
+
 ## 1. Kernel bootstrap (once per controller session)
 
 ```python

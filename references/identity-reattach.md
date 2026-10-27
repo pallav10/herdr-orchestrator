@@ -15,6 +15,35 @@ Reattachment requires exact workspace **and** pane, mode-appropriate stable toke
 
 Managed-name ownership assumes exclusive orchestrator ownership of the reserved `fo-` namespace. It cannot reliably detect an external replacement that perfectly copies the name and metadata; it is weaker than a server-issued runtime identity. Uncertain identity blocks.
 
+## User-owned pane compatibility preflight
+
+Before opening a run that will dispatch to existing user-owned panes, pass every target to initialization:
+
+```sh
+python3 scripts/init-docs.py --dir /absolute/repo/docs --job change-name --pane w4E:p0 --pane w4E:p1
+```
+
+Each `--pane` performs read-only `agent get` through the shared Herdr boundary and requires the same server-issued `agent_id`/`id` as dispatch. A missing stable ID exits 3 with remediation; ambiguous targets and protocol mismatches propagate the CLI error (exit 1). All targets must pass before any run/session creation or binding. No pane is enrolled, stamped, or prompted by preflight. Without `--pane`, initialization remains offline-capable for native or managed-worker plans; it does not certify user-owned pane support. Direct `session_docs.open_session` callers must perform this CLI preflight before creating metadata for a user-pane plan.
+
+Live read-only discovery on session `flowops` confirmed CLI 0.9.5/server 0.9.3, protocol 22, `endpoint_compatible=yes`, and `private_protocol_compatible=yes`. `agent get qrp-services` reports `workspace_id=w4E`, `pane_id=w4E:p0`, `terminal_id`, and `agent_session`, but no `agent_id`/`id`. This schema is **unsupported for user-owned pane dispatch**. Preflight only refuses earlier; it does not restore `qrp-services` dispatch. Do not change a required existing-pane task into a managed-worker task and call it fixed.
+
+Preflight is a capability check, not an identity reservation. Dispatch and continuation still re-read live identity and compare recorded workspace, pane, agent ID, and run/node/attempt tokens; replacement or conflicting evidence remains a refusal. The documented Herdr 0.8.2/protocol 20 compatibility target does not imply that every user-owned pane exposes a runtime ID.
+
+## Required upstream agent-incarnation contract
+
+Protocol 22's bundled schema (`herdr --session flowops api schema --json`, schema version 1) defines `AgentInfo.terminal_id` as a string and `agent_session` as a reported session reference, not an immutable agent-process identity. `AgentPromptParams` accepts only `target`, `text`, and `wait`; `AgentSendKeysParams` accepts only `target` and `keys`; `AgentWaitParams` has no identity guard either. Names/pane/terminal targets can outlive an agent process, and reported session paths can be reused. Reading these fields twice cannot close the replacement race before prompt submission or Enter recovery. Endpoint/protocol compatibility is not this missing capability.
+
+The upstream Herdr patch required to restore dispatch safely is:
+
+1. Define and advertise a versioned `agent-incarnation-v1` capability. Mint a server-owned opaque `agent_instance_id` for each agent-process incarnation, never reuse it on replacement/restart/resume, and expose it with exact workspace/pane in `agent get`, `agent list`, prompt/wait results and observations. Terminal IDs, process IDs, names and reported session references are not substitutes. If the server cannot prove continuity after restart, mint a new ID.
+2. Add `expected_agent_instance_id` to prompt, send-keys and wait requests and CLI `--expect-agent-instance ID`. Resolve and compare under the server's input-delivery synchronization, before enqueueing **any** input; a replacement/ambiguous target must return a structured `agent_identity_mismatch` with zero input. Pin waits and delayed delivery to that same incarnation, including replacement during a wait; a completed turn from a replacement must not confirm the original delivery.
+3. Make run/node/attempt stamping identity-conditional too: either add the same expected identity to metadata mutation or atomically stamp the matched agent's context as part of guarded prompt delivery. Workspace-level tokens alone cannot authorize a replacement.
+4. Publish these guarantees and schema/CLI support together. Then implement an explicit Herdr-orchestrator `identity_kind: agent-incarnation-v1` in graph identity validation, prompt/preflight, liveness/reattachment, collection and receipt identity checks. Persist the instance ID in dispatch evidence, and pass it on prompt, Enter recovery, waits and token stamping. Negotiate the advertised capability; do not enable it from a version number, field resemblance or fallback alias.
+
+Upstream acceptance proof must replace the agent in the **same terminal/pane**, including with the same reported session/name, between get and send and during wait/Enter recovery. Every stale-instance mutation must have zero input/metadata side effects, replacement output must not confirm delivery, and ambiguous targets/protocol mismatch must remain refusals. This is an upstream implementation plan, not a capability available in protocol 22 or implemented by this candidate; no live pane should be restarted or replaced to test it.
+
+
+
 ## Node IDs and display labels
 
 Fresh graph IDs should be unique, task-specific lowercase kebab-case, at most 32 characters (e.g. `research-contracts`, `implement-api`, `integrate-feature`). The accepted grammar also supports historical IDs matching `[A-Za-z0-9][A-Za-z0-9._-]{0,31}`. There is no reserved integrator node ID: an integration output identifies its role. Attempt context is `<run-id>/<node>/<attempt>`.
@@ -33,9 +62,15 @@ Fresh graph IDs should be unique, task-specific lowercase kebab-case, at most 32
 
 Contextual spawn derives writer/integrator `--base` and required `--branch`; do not add speculative overrides. Explicit mismatches are usage errors (`--base must equal graph.base_sha ...` — the accepted base returned by `accept_graph`, not a value submitted in the graph; `--branch must equal ...`). Uncontextual independent writers must supply their own isolated branch/base as appropriate. Read-only dispatch accepts `--cwd`; worktree creation normalizes a linked-worktree cwd to its verified primary checkout, without changing that checkout. Read-only workspace creation retains requested cwd. Identity `repo` remains the accepted run repository.
 
+## Revising an unlaunched pane plan
+
+After a local CLI name-validation refusal with zero external mutation, revise the accepted graph with `accept_graph` under the current holder; do not edit the graph projection or caches. A pane's accepted `handle.name` (for example, correcting `w4E:p0` to the existing agent name `qrp-services`) and planned/ready replay handle now agree, including when the handle also contains workspace/pane selectors. A pending `dispatch_intent` still freezes its ownership snapshot.
+
+Revision is permitted only before external launch evidence. Initial `prompt-agent.py` dispatch validates identity, then persists immutable `launch-intent.json` under the dispatch lock **before** workspace token stamping or prompt submission. A ready attempt with launch or prompt intent is frozen; running/blocked plans remain frozen too, except metadata-only `phase`. A failed or uncertain send is not permission to rename/retarget the same attempt or delete evidence. The marker proves possible side effects, not delivery or permission to resend. Runtime handles from dispatched/terminal attempts remain historical evidence, not editable plan selectors.
+
 ## Sidecar ordering and at-most-once resume
 
-Contextual adapters require run/node/attempt, exact holder triple and epoch. `dispatch-agent.py` verifies epoch, commits immutable consumed/ownership snapshots via `dispatch_intent` if absent, and holds authorization/launch serialization. Ordered sidecars under the attempt directory are:
+Contextual adapters require run/node/attempt, exact holder triple and epoch. `dispatch-agent.py` verifies epoch, commits immutable consumed/ownership snapshots via `dispatch_intent` if absent, and holds authorization/launch serialization. Initial user-pane prompting persists `launch-intent.json` before token stamping/prompting to freeze the plan; it does not use managed-worker spawn/resume recovery. Ordered managed-worker sidecars under the attempt directory are:
 
 1. `launch-intent.json`: immutable identity and launch plan, before creation/start.
 2. `dispatch-identity.json`: exact workspace/pane, identity kind/token, repo/worktree and context, before metadata/prompt.

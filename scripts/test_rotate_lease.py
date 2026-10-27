@@ -38,7 +38,7 @@ def load(filename: str) -> Any:
 
 
 SOURCE = "OMP ExtensionContext.getContextUsage"
-EXTENSION = Path(os.environ.get("HERDR_TEST_OMP_EXTENSION", Path.home() / ".omp/agent/extensions/herdr-omp-agent-state.ts"))
+EXTENSION = Path(os.environ.get("HERDR_TEST_OMP_EXTENSION", SCRIPTS.parent / "extensions" / "herdr-context.ts"))
 OMP_CLI = Path(os.environ.get("HERDR_TEST_OMP_CLI", Path.home() / "node_modules/@oh-my-pi/pi-coding-agent/dist/cli.js"))
 BUN = os.environ.get("HERDR_TEST_BUN", shutil.which("bun"))
 READONLY_HERDR = {("workspace", "get"), ("pane", "get"), ("pane", "process-info")}
@@ -1806,7 +1806,7 @@ class ContextUsageTest(LeaseFixtures, unittest.TestCase):
             {"hook": "session_start", "usage": {"tokens": 8000, "contextWindow": 10000, "percent": 0.01}, "sessionFile": raw, "sessionId": "sid-main"},
             {"hook": "tool_execution_start", "event": {"toolName": "read"}, "usage": {"tokens": 9000, "contextWindow": 10000, "percent": 0.01}, "sessionFile": raw, "sessionId": "sid-main"},
             {"hook": "session_switch", "usage": {"tokens": 9000, "contextWindow": 10000, "percent": 0.5}, "sessionFile": other_raw, "sessionId": "sid-other"},
-            {"hook": "model_changed", "usage": {"tokens": 9000, "contextWindow": 10000, "percent": 0.5}, "model": {"provider": "openai", "id": "gpt"}, "sessionFile": other_raw, "sessionId": "sid-other"},
+            {"hook": "retry_fallback_applied", "usage": {"tokens": 9000, "contextWindow": 10000, "percent": 0.5}, "model": {"provider": "openai", "id": "gpt"}, "sessionFile": other_raw, "sessionId": "sid-other"},
             {"bind": "child", "hook": "tool_execution_start", "event": {"toolName": "read"}, "hasUI": True, "agent": {"kind": "sub", "id": "child", "name": "explore", "depth": 1}, "usage": {"tokens": 1, "contextWindow": 10000, "percent": 0.99}, "sessionFile": raw, "sessionId": "sid-child"},
         ])
         start, tool, switched, model, child = result["results"]

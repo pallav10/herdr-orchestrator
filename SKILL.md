@@ -1,7 +1,7 @@
 ---
 name: herdr-orchestrator
 description: >-
-  Use inside a Herdr session when ONE pane should orchestrate sibling worker panes: plan a task graph, fan out work to agent panes, collect results, rotate the controller to a fresh pane when its context fills, or keep durable run/handoff state across pane exits. Also for planning a Herdr orchestration before entering Herdr. Not for: driving a single agent pane, tmux splits, generic subagents or shell & jobs, or an app's internal orchestrator.
+  Use for bounded user-directed control of existing Herdr panes, or for ONE controller coordinating durable parallel workers, isolated worktrees, and handoffs. Native pane prompting and validated durable graph execution are distinct workflows. Not for tmux splits, generic subagents, or an app's internal orchestrator.
 license: MIT
 ---
 # Herdr Orchestrator
@@ -10,6 +10,11 @@ license: MIT
 One controller owns the task graph and durable run events; workers execute slices.
 Use native `task`/`workflow` for bounded session-local work, `herdr-agent` for durable workers/isolated writers, and `pane` for existing user panes.
 Planning outside Herdr is supported; live pane operations require the chosen Herdr session (`HERDR_ENV=1`).
+
+## Choose the workflow first
+- **Bounded existing-pane work:** use native Herdr controls for a user-directed task, such as read-only analysis. Verify the chosen session and exact explicit target (or supported `--current`), submit once, and use one background wait or edge notification. No graph/session scaffolding is needed. Follow the [native pane playbook](references/controller-playbook.md#native-existing-pane-playbook).
+- **Durable coordinated execution:** use the graph/adapters below when leases, ownership, immutable dispatch evidence, receipts, promotion or controller handoff are required. Native prompting grants none of those guarantees and cannot satisfy a blocked durable graph node.
+- Discover installed CLI help once and cache verified facts until evidence changes. Bare command groups may print help with exit 2; run independent help probes separately, not chained with `&&`. Do not reread the whole skill or repeatedly probe status for a simple native prompt.
 
 Resolve adapters relative to this skill's installed directory; use absolute script paths when the controller's working directory is the target repository. The plugin bundles a context-only extension for rotation's measured gate. Restart OMP after plugin installation, keep Herdr's stock lifecycle integration, and avoid loading a second context snapshot exporter.
 
@@ -42,7 +47,7 @@ Lock-taking entrypoints accept `--lock-timeout SECONDS`: finite positive, defaul
 ## Orchestration loop
 Use absolute `RUN`, `SESSION`, repository paths and concrete holder `H={"workspace": W, "pane": P, "session": SESSION}`; `E` is the replayed epoch. Commands below use `python3 scripts/`.
 
-1. Open: `init-docs.py --dir docs --job JOB`; use returned canonical session/run, not informational symlinks.
+1. Open: `init-docs.py --dir docs --job JOB`; add `--pane TARGET` for **every planned user-owned pane** so unsupported stable identity or CLI protocol errors refuse before run/session metadata writes. Use returned canonical session/run, not informational symlinks. Endpoint compatibility alone does not establish pane identity support; see [identity preflight](references/identity-reattach.md#user-owned-pane-compatibility-preflight).
 2. Accept: `run_state.accept_graph(RUN, graph, repo=REPO, holder=H)` after planning dependencies, ownership, outputs, executors and routing; wait for acceptance before dispatch. The returned `base_sha` is authoritative (`HEAD` of the supplied `repo` at first acceptance; a `base_sha` submitted in the graph is ignored): verify it against the commit the briefs assume before dispatch. Continuing a previous candidate in a fresh writer: [accepted base and continuation](references/controller-playbook.md#211-accepted-base-and-continuing-a-previous-candidate).
 3. Reconcile: `reconcile.py --run RUN`; add `--session SESSION --holder-workspace W --holder-pane P` for observation/lifecycle and `--notify` for edge notifications.
 4. Dispatch: `dispatch-agent.py --run RUN --node NODE --session SESSION --holder-workspace W --holder-pane P --epoch E --prompt-file FILE`; contextual writers derive branch/base from the graph, read-only workers may add `--cwd DIR`.
@@ -51,7 +56,7 @@ Use absolute `RUN`, `SESSION`, repository paths and concrete holder `H={"workspa
 7. Promote integrator: execute the exact `run_state.promote(...)` call printed by finish; it records terminal success. Recover with holder-authorized `reconcile.py --run RUN --repo REPO`.
 8. Retire: `retire-agents.py TARGET... --run RUN --session SESSION --holder-workspace W --holder-pane P` after the reference's terminal/consumption/promotion gates.
 
-For native launches, record intent, inject `prepare_dispatch_prompt`, launch, then record handle/model in `dispatched`. Supply `--native-inventory-complete` only for a genuinely complete harness inventory, with one `--live-native-id` per live handle; omission is unknown, explicit empty is authoritative. Full semantics: [run-state-api](references/run-state-api.md).
+For graph-enrolled native `task`/`workflow` launches (not direct Herdr pane prompting), record intent, inject `prepare_dispatch_prompt`, launch, then record handle/model in `dispatched`. Supply `--native-inventory-complete` only for a genuinely complete harness inventory, with one `--live-native-id` per live handle; omission is unknown, explicit empty is authoritative. Full semantics: [run-state-api](references/run-state-api.md).
 
 ## Self-improvement loop
 While using this skill, automatically queue each distinct, evidenced skill defect or concrete improvement:

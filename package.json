@@ -1,6 +1,6 @@
 {
   "name": "herdr-orchestrator",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Durable multi-agent orchestration from one Herdr controller pane.",
   "license": "MIT",
   "author": "Pallav Parikh",

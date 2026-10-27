@@ -199,11 +199,6 @@ def events_for_attempt(events: Iterable[dict[str, Any]], node: str, attempt: int
 
 
 def _node_is_active(run_dir: Path, node: dict[str, Any]) -> bool:
-    """Running/blocked, or ready with an intent that may already have had a side effect.
-
-    Herdr executors flush launch-intent.json before any Herdr call, so its absence proves
-    no launch; native task/workflow leave no such marker, so their intent alone is active.
-    """
     state = node.get("state")
     if state in graph_model.ACTIVE_STATES:
         return True
@@ -211,7 +206,8 @@ def _node_is_active(run_dir: Path, node: dict[str, Any]) -> bool:
         return False
     if node.get("executor") not in HERDR_EXECUTORS:
         return True
-    return (attempt_dir(run_dir, node["id"], int(node["attempt"])) / "launch-intent.json").exists()
+    path = attempt_dir(run_dir, node["id"], int(node["attempt"]))
+    return any((path / name).exists() for name in ("launch-intent.json", "prompt-attempt.json"))
 
 
 def _validate_revision_against_runtime(run_dir: Path, state: dict[str, Any], graph: dict[str, Any], previous: dict[str, Any] | None = None) -> None:
@@ -1366,7 +1362,7 @@ def _apply_event(state: dict[str, Any], controller: dict[str, Any], graph: dict[
 def _runtime_overlay(existing: dict[str, Any]) -> dict[str, Any]:
     overlay = {key: existing[key] for key in RUNTIME_KEYS if key in existing}
     handle = existing.get("handle")
-    if isinstance(handle, dict) and any(handle.get(key) for key in ("job", "job_id", "runId", "spawning_session", "workspace", "pane", "agent")):
+    if existing.get("state") not in {"planned", "ready"} and isinstance(handle, dict) and any(handle.get(key) for key in ("job", "job_id", "runId", "spawning_session", "workspace", "pane", "agent")):
         overlay["handle"] = handle
     model = existing.get("model")
     if isinstance(model, dict) and all(key in model for key in MODEL_KEYS):

@@ -41,7 +41,7 @@ Persist canonical absolute paths only. Prompts and metadata must never cite `lat
 
 `owner` is `HERDR_WORKSPACE_ID`, else `HERDR_PANE_ID`, else `unknown`. Reuse of an existing session requires a real workspace/pane identity, matching job, and an existing absolute `session.json.run` whose directory contains `run.json`. Outside Herdr there is no identity, so every start opens a fresh session. A fresh session may carry prose forward, but it still binds exactly one immutable absolute run path.
 
-`init-docs.py --dir docs --job <name> [--run PATH]` prints JSON with `session` and `run`. Both are canonical absolute; `session` is the same path stored as `holder.session`. Never CWD-relative; never `latest`.
+`init-docs.py --dir docs --job <name> [--run PATH] [--pane TARGET ...]` prints JSON with `session` and `run`. Both are canonical absolute; `session` is the same path stored as `holder.session`. Never CWD-relative; never `latest`. For user-owned pane plans, supply every target with repeatable `--pane`: read-only stable-ID preflight must pass for all targets before creation or binding of run/session metadata. Missing `agent_id`/`id` refuses with exit 3; CLI ambiguity/protocol errors propagate with exit 1. Omitting `--pane` preserves offline initialization, not pane compatibility certification. See [identity preflight](identity-reattach.md#user-owned-pane-compatibility-preflight).
 
 ## Run binding
 
