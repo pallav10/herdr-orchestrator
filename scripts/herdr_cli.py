@@ -81,18 +81,32 @@ def _session_hint() -> str:
     )
 
 
-def _run(args: tuple[str, ...]) -> subprocess.CompletedProcess:
-    timeout = (
-        READ_TIMEOUT
-        if len(args) >= 2
-        and args[0] in ("agent", "workspace", "pane")
-        and args[1] in ("get", "list", "show")
-        else TIMEOUT
+def _is_read_only(args: tuple[str, ...]) -> bool:
+    if len(args) < 2:
+        return False
+    head, verb = args[0], args[1]
+    return (
+        (head in ("agent", "workspace", "pane") and verb in ("get", "list", "show"))
+        or (head == "pane" and verb == "process-info")
+        or (head == "agent" and verb == "read")
+        or (head == "api" and verb == "schema")
     )
+
+
+def _run(args: tuple[str, ...]) -> subprocess.CompletedProcess:
+    timeout = READ_TIMEOUT if _is_read_only(args) else TIMEOUT
     try:
         proc = subprocess.run(["herdr", *args], capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError as exc:
         raise ioutil.RunError("herdr not on PATH") from exc
+    except subprocess.TimeoutExpired as exc:
+        err = ioutil.RunError(f"herdr {' '.join(args)} timed out after {timeout}s")
+        err.code = "timeout"
+        err.args_tuple = args
+        err.returncode = None
+        err.stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+        err.stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+        raise err from exc
     if proc.returncode != 0:
         out = proc.stdout.strip()
         err = proc.stderr.strip()

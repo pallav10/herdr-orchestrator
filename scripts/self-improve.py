@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -16,6 +18,35 @@ import ioutil
 SCRIPTS = Path(__file__).resolve().parent
 JOBS = Path.home() / ".omp/run/herdr-improvements"
 
+
+def _validate_skill_repo(repo: Path) -> Path:
+    if not (repo / "SKILL.md").is_file() or not (repo / "scripts/spawn-agent.py").is_file():
+        raise ioutil.PreconditionError("--skill-repo must be the editable skill Git root")
+    try:
+        root = Path(ioutil._run_git(repo, "rev-parse", "--show-toplevel")).resolve()
+    except ioutil.RunError as exc:
+        raise ioutil.PreconditionError(f"--skill-repo must be the editable skill Git root: {exc}") from exc
+    if root != repo:
+        raise ioutil.PreconditionError("--skill-repo must be the editable skill Git root")
+    return repo
+
+
+def _ensure_jobs_dir() -> Path:
+    if JOBS.is_symlink():
+        raise ioutil.PreconditionError(f"improvement job root must not be a symlink: {JOBS}")
+    if not JOBS.exists():
+        JOBS.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            JOBS.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+    st = JOBS.lstat()
+    if not stat.S_ISDIR(st.st_mode) or stat.S_ISLNK(st.st_mode):
+        raise ioutil.PreconditionError(f"improvement job root must be a real directory: {JOBS}")
+    if st.st_uid != os.getuid():
+        raise ioutil.PreconditionError(f"improvement job root must be owned by current user: {JOBS}")
+    os.chmod(JOBS, 0o700)
+    return JOBS
 
 def worker_prompt(job: dict) -> str:
     return f"""You are a detached herdr-orchestrator self-improvement worker, not a controller or a node in the reporting run.
@@ -51,10 +82,7 @@ def launch_job(directory: Path) -> int:
     try:
         job["status"] = "preparing"
         ioutil.atomic_json(directory / "job.json", job)
-        repo = Path(job["repo"])
-        root = Path(ioutil._run_git(repo, "rev-parse", "--show-toplevel")).resolve()
-        if root != repo or not (repo / "SKILL.md").is_file() or not (repo / "scripts/spawn-agent.py").is_file():
-            raise ioutil.PreconditionError("--skill-repo must be the editable skill Git root")
+        repo = _validate_skill_repo(Path(job["repo"]).resolve())
         job["base"] = ioutil._run_git(repo, "rev-parse", "HEAD")
         checkout = Path(job["checkout"])
         if checkout.exists() or checkout.is_symlink():
@@ -94,11 +122,9 @@ def main() -> int:
             return launch_job(args.launch_job)
         if not args.finding or not args.finding.strip():
             parser.error("--finding must contain a concrete issue or improvement")
-        repo = Path(args.skill_repo).expanduser().resolve()
-        if not (repo / "SKILL.md").is_file() or not (repo / "scripts/spawn-agent.py").is_file():
-            raise ioutil.PreconditionError("--skill-repo must point to the editable skill checkout")
-        JOBS.mkdir(parents=True, exist_ok=True)
-        directory = Path(tempfile.mkdtemp(prefix="si-", dir=JOBS)).resolve()
+        repo = _validate_skill_repo(Path(args.skill_repo).expanduser().resolve())
+        jobs_dir = _ensure_jobs_dir()
+        directory = Path(tempfile.mkdtemp(prefix="si-", dir=jobs_dir)).resolve()
         job = {
             "id": directory.name,
             "dir": str(directory),

@@ -1,6 +1,6 @@
 # Controller playbook — how a run was actually driven
 
-Practical controller examples complement [SKILL.md](../SKILL.md) and the [reference index](../README.md#layout). Runtime contracts live in the linked references, not in historical examples.
+Practical controller examples complement [SKILL.md](../SKILL.md) and [README.md](../README.md). Runtime contracts live in the linked references, not in historical examples.
 
 ## Native existing-pane playbook
 
@@ -150,7 +150,7 @@ Put `step0` first in the brief; it fails closed if the worktree is not at the ac
 
 ### 2.2 Dispatch
 
-Follow [SKILL.md](../SKILL.md#orchestration-loop) and [identity-reattach.md](identity-reattach.md) for dispatch, confirmed delivery, launch recovery, and exact-identity continuation. Every OMP prompt starts with the literal line `orchestrate`.
+Follow [SKILL.md](../SKILL.md#the-4-step-hopy-loop) and [identity-reattach.md](identity-reattach.md) for dispatch, confirmed delivery, launch recovery, and exact-identity continuation. Every OMP prompt starts with the literal line `orchestrate`.
 
 ### 2.3 Monitor (never poll by hand)
 
@@ -158,7 +158,7 @@ Launch one auto-delivering background observer using [run-state-api.md](run-stat
 
 ### 2.4 Collect
 
-Follow [SKILL.md](../SKILL.md#orchestration-loop) and [retire-promote.md](retire-promote.md#collection-and-ownership) for ownership, receipt, collection, and integrator promotion gates.
+Follow [SKILL.md](../SKILL.md#the-4-step-hopy-loop) and [retire-promote.md](retire-promote.md#collection-and-ownership) for ownership, receipt, collection, and integrator promotion gates.
 
 Read the full contextual `summary.json` and the screenshots the brief demanded before calling the slice done. The controller reviews screenshots; a slice that "passed its tests" with a broken screenshot is not accepted.
 
