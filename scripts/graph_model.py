@@ -64,7 +64,11 @@ def _as_list(value: object, name: str) -> list[Any]:
 
 
 def _node_outputs(nodes: dict[str, Any], node_id: str) -> dict[str, dict[str, Any]]:
-    return {out["name"]: out for out in _as_list(nodes[node_id].get("outputs"), f"{node_id}.outputs") if isinstance(out, dict) and "name" in out}
+    return {
+        out["name"]: out
+        for out in _as_list(nodes[node_id].get("outputs"), f"{node_id}.outputs")
+        if isinstance(out, dict) and isinstance(out.get("name"), str)
+    }
 
 
 
@@ -112,7 +116,7 @@ def validate_graph(graph: dict[str, Any]) -> None:
             raise PreconditionError(f"node {node_id} executor must be one of {sorted(EXECUTORS)}")
         deps = _as_list(node.get("depends_on"), f"{node_id}.depends_on")
         for dep in deps:
-            if dep not in nodes:
+            if not isinstance(dep, str) or dep not in nodes:
                 raise PreconditionError(f"node {node_id} depends on unknown node {dep}")
         if node.get("ready_when", "all_succeeded") != "all_succeeded":
             raise PreconditionError(f"node {node_id} ready_when must be all_succeeded")
@@ -120,7 +124,8 @@ def validate_graph(graph: dict[str, Any]) -> None:
         if retry is not None:
             if not isinstance(retry, dict):
                 raise PreconditionError(f"node {node_id}.retry must be an object")
-            if int(retry.get("max_attempts", 0)) < 1:
+            max_attempts = retry.get("max_attempts", 0)
+            if isinstance(max_attempts, bool) or int(max_attempts) < 1:
                 raise PreconditionError(f"node {node_id}.retry.max_attempts must be >= 1")
             if not set(_as_list(retry.get("on"), f"{node_id}.retry.on")).issubset(RETRY_ON):
                 raise PreconditionError(f"node {node_id}.retry.on contains unsupported states")

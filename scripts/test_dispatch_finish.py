@@ -14,6 +14,7 @@ sys.path.insert(0, str(SCRIPTS))
 import liveness
 from cli_common import ChildFailed
 import run_state
+import verdict
 from testkit import HOLDER, commit_file, git, load_script, make_worktree, new_run, run_module, seed_repo
 
 
@@ -125,6 +126,8 @@ class FakeCollect:
         attempt = flag(argv, "--attempt")
         attempt_dir = run_state.attempt_dir(run, node, int(attempt))
         identity = json.loads((attempt_dir / "dispatch-identity.json").read_text(encoding="utf-8"))
+        if "--status-only" in argv:
+            return {"agents": [{"name": identity.get("worker_id") or identity.get("agent")}]}
         summary_path = attempt_dir / "summary.json"
         if not summary_path.is_file():
             summary_path.write_text(json.dumps({"status": "done"}, sort_keys=True) + "\n", encoding="utf-8")
@@ -764,6 +767,33 @@ class TestFinishAgent(RepoCase):
         self.assertEqual([item["hash"] for item in integration["consumed"]], [item["hash"] for item in vcs_items])
         self.assertTrue(integration["consumed"])
 
+    def test_non_passing_verdicts_take_precedence_over_missing_commits(self):
+        repo = seed_repo(self.root / "repo")
+        for node, graph in (("W", self.writer_graph()), ("D", self.integrator_graph())):
+            for status, outcome in (("fail", "failed"), ("rework", "failed"), ("blocked", "blocked")):
+                with self.subTest(node=node, status=status):
+                    run = new_run(self.root, graph, repo=repo, holder=self.holder, job=f"{node}-{status}")
+                    self.start_writer(run, node, repo)
+                    attempt = run_state.attempt_dir(run, node, 1)
+                    doc = {"status": status, "summary": "needs attention", "findings": []}
+                    (attempt / "verdict.json").write_text(json.dumps(doc), encoding="utf-8")
+                    module = load_script("finish-agent.py")
+                    module.run_child = FakeCollect(form="none")
+                    before = len(events_of(run))
+
+                    code, out, err = run_module(module, self.finish_argv(run, node, 1))
+
+                    self.assertEqual(code, 0, err)
+                    result = json.loads(out)
+                    self.assertEqual(result["state"], outcome)
+                    self.assertIsNone(result["promote"])
+                    self.assertEqual(result["vcs_form"], "none" if node == "W" else None)
+                    self.assertEqual(
+                        [(row["type"], row["node"], row["attempt"]) for row in events_of(run)[before:]],
+                        [(outcome, node, 1)],
+                    )
+                    self.assertFalse((attempt / "integration.json").exists())
+
     def test_finish_refuses_a_writer_that_committed_nothing(self):
         # run 20260918-220934: T and C declared worktrees, committed nothing because
         # their prompts never ran, and were still recorded succeeded at form none.
@@ -925,7 +955,7 @@ class TestFinishAgent(RepoCase):
         code, out, err = run_module(module, self.finish_argv(run, "D", 1))
         self.assertEqual(code, 0, err)
         promote = json.loads(out)["promote"]
-        self.assertIn('"workspace": ', promote)
+        self.assertIn("'workspace': ", promote)
         self.assertNotIn("{…}", promote)
 
     def test_finish_rejects_integrator_without_commit_before_receipts(self):
@@ -947,7 +977,52 @@ class TestFinishAgent(RepoCase):
         self.assertTrue((attempt_dir / "integration.json").is_file())
         self.assertTrue((attempt_dir / "vcs.json").is_file())
 
+    def test_finish_rejects_interrupted_integrator_before_receipt_or_collection(self):
+        module = load_script("finish-agent.py")
+        fake = FakeCollect()
+        module.run_child = fake
+        repo = seed_repo(self.root / "repo")
+        run = new_run(self.root, self.integrator_graph(), repo=repo, holder=self.holder)
+        handle = self.start_writer(run, "D", repo)
+        commit_file(Path(handle["worktree_path"]), "src/d/merged.txt", "d\n", "merge")
+        run_state.append_event(run, {"type": "interrupted", "node": "D", "attempt": 1}, holder=self.holder)
+        attempt = run_state.attempt_dir(run, "D", 1)
+
+        code, _, err = run_module(module, self.finish_argv(run, "D", 1))
+
+        self.assertEqual(code, 3)
+        self.assertIn("from state 'interrupted'", err)
+        self.assertFalse((attempt / "integration.json").exists())
+        self.assertEqual(fake.calls, [])
+
+    def test_finish_already_promoted_integrator_does_not_request_promotion_again(self):
+        module = load_script("finish-agent.py")
+        fake = FakeCollect()
+        module.run_child = fake
+        repo = seed_repo(self.root / "repo")
+        run = new_run(self.root, self.integrator_graph(), repo=repo, holder=self.holder)
+        handle = self.start_writer(run, "D", repo)
+        head = commit_file(Path(handle["worktree_path"]), "src/d/merged.txt", "d\n", "merge")
+        code, _, err = run_module(module, self.finish_argv(run, "D", 1))
+        self.assertEqual(code, 0, err)
+        run_state.promote(run, node="D", attempt=1, new_sha=head, repo=repo, holder=self.holder)
+        before = events_of(run)
+
+        for force in (False, True):
+            with self.subTest(force=force):
+                fake.calls.clear()
+                code, out, err = run_module(module, self.finish_argv(run, "D", 1, force=force))
+
+                self.assertEqual(code, 0, err)
+                result = json.loads(out)
+                self.assertEqual(result["state"], "succeeded")
+                self.assertIsNone(result["promote"])
+                self.assertEqual(result["since"], head)
+                self.assertEqual(sum("--force" in argv for argv in fake.calls), int(force))
+                self.assertEqual(events_of(run), before)
+
     def test_finish_propagates_collector_exit_code(self):
+
         module = load_script("finish-agent.py")
         repo = seed_repo(self.root / f"repo-{len(list(self.root.glob('repo-*')))}")
         run = str(new_run(self.root, self.writer_graph(), repo=repo, holder=self.holder))
@@ -960,6 +1035,44 @@ class TestFinishAgent(RepoCase):
                 module.run_child = boom
                 code, out, err = run_module(module, self.finish_argv(run, "W", 1))
                 self.assertEqual(code, rc)
+
+
+class TestVerdictContracts(unittest.TestCase):
+    def test_verdict_invalid_utf8_raises_precondition_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / "verdict.json").write_bytes(b'{"status":"pass","summary":"\xff","findings":[]}')
+
+            with self.assertRaisesRegex(run_state.PreconditionError, "invalid verdict.json"):
+                verdict.load_and_validate_verdict(td)
+
+    def test_interrupted_and_skipped_attempts_break_rework_streak(self):
+        for outcome in ("interrupted", "skipped"):
+            with self.subTest(outcome=outcome):
+                rows = [
+                    {"type": "failed", "node": "W", "attempt": 1, "reason": "same error"},
+                    {"type": outcome, "node": "W", "attempt": 2},
+                    {"type": "failed", "node": "W", "attempt": 3, "reason": "same error"},
+                    {"type": "failed", "node": "W", "attempt": 4, "reason": "same error"},
+                ]
+
+                result = verdict.detect_rework_stagnation(rows, "W", window=3)
+
+                self.assertFalse(result["stagnated"])
+                self.assertEqual(result["attempts"], [3, 4])
+
+    def test_generic_rework_reason_does_not_hide_changed_findings(self):
+        rows = [
+            {
+                "type": "failed", "node": "W", "attempt": attempt,
+                "reason": "verdict:rework", "findings_hash": f"sha256:{digest * 64}",
+            }
+            for attempt, digest in enumerate(("a", "a", "b"), start=1)
+        ]
+
+        result = verdict.detect_rework_stagnation(rows, "W", window=3)
+
+        self.assertEqual(result["attempts"], [1, 2, 3])
+        self.assertFalse(result["stagnated"])
 
 
 if __name__ == "__main__":

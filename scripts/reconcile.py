@@ -93,8 +93,9 @@ def observe_live_herdr(run=None, *, lock_timeout=120) -> list[dict[str, Any]] | 
         if not isinstance(agents, list):
             raise ioutil.RunError("herdr agent list returned unexpected output")
         cache: dict[str, tuple[dict, dict]] = {}
-        recorded_identities = _recorded_herdr_identities(run, lock_timeout=lock_timeout) if run else None
-        recorded_surfaces = _surfaces_of(recorded_identities or [])
+        recorded_identities = _recorded_herdr_identities(run, lock_timeout=lock_timeout) if run else []
+        recorded_surfaces = _surfaces_of(recorded_identities)
+        seen_identities = set()
         records = []
         for agent in agents:
             if not isinstance(agent, dict):
@@ -102,9 +103,9 @@ def observe_live_herdr(run=None, *, lock_timeout=120) -> list[dict[str, Any]] | 
             workspace_id = agent_workspace_id(agent)
             if not workspace_id:
                 raise ioutil.RunError("herdr agent list returned unexpected output")
+            agent_id = _exact_agent_id(agent)
+            worker_id = first_str(agent.get("name"))
             if run:
-                agent_id = _exact_agent_id(agent)
-                worker_id = first_str(agent.get("name"))
                 matches_recorded = any(
                     (
                         recorded.get("identity_kind") in (None, graph_model.IDENTITY_RUNTIME_ID)
@@ -127,6 +128,10 @@ def observe_live_herdr(run=None, *, lock_timeout=120) -> list[dict[str, Any]] | 
                     ):
                         raise ioutil.RunError("herdr agent list returned unexpected output")
                     continue
+                identity = (agent_id, None) if agent_id else (None, worker_id)
+                if identity in seen_identities:
+                    raise ioutil.PreconditionError(f"duplicate live Herdr identity: {agent_id or worker_id}")
+                seen_identities.add(identity)
             if workspace_id not in cache:
                 cache[workspace_id] = _workspace_record(workspace_id)
             workspace, tokens = cache[workspace_id]
@@ -134,7 +139,6 @@ def observe_live_herdr(run=None, *, lock_timeout=120) -> list[dict[str, Any]] | 
             if not pane:
                 raise ioutil.RunError("herdr agent list returned unexpected output")
             agent_tokens = _optional_tokens(agent, "agent list")
-            agent_id = _exact_agent_id(agent)
             filtered_tokens = {
                 key: tokens[key]
                 for key in ("provenance", "run", "node", "attempt")
@@ -148,10 +152,7 @@ def observe_live_herdr(run=None, *, lock_timeout=120) -> list[dict[str, Any]] | 
                     "tokens": filtered_tokens,
                 }, agent))
                 continue
-            if recorded_identities is None:
-                recorded_identities = _recorded_herdr_identities(run, lock_timeout=lock_timeout)
-            worker_id = first_str(agent.get("name"))
-            if worker_id and graph_model.WORKER_ID_RE.fullmatch(worker_id):
+            if run and worker_id and graph_model.WORKER_ID_RE.fullmatch(worker_id):
                 candidate = {
                     "identity_kind": graph_model.IDENTITY_MANAGED_NAME,
                     "worker_id": worker_id,
@@ -165,11 +166,14 @@ def observe_live_herdr(run=None, *, lock_timeout=120) -> list[dict[str, Any]] | 
                 ):
                     records.append(_with_status_fields(candidate, agent))
                     continue
+                raise ioutil.PreconditionError(
+                    f"live Herdr worker {worker_id} at {workspace_id}/{pane} does not match its recorded identity"
+                )
             # Scoped inventories also contain controllers and retained workers.
             # Recorded surfaces below still require an exact live identity.
             if not run and (agent_tokens or tokens):
                 raise ioutil.RunError("herdr agent list returned unexpected output")
-            if (workspace_id, pane) in _surfaces_of(recorded_identities):
+            if (workspace_id, pane) in recorded_surfaces:
                 raise ioutil.RunError("herdr agent list returned unexpected output")
         return records
     except ioutil.RunError as exc:

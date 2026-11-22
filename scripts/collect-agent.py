@@ -67,10 +67,12 @@ def attempt_dir_for(context: tuple[Path, str, str]) -> Path:
     return ledger.attempt_dir(run, node, int(attempt))
 
 
-def require_lease(run: Path, holder: dict[str, str]) -> None:
-    """Refuse receipt writes unless the caller holds the run's active lease."""
-    controller = ledger.replay(run)["controller"]
-    graph_model.require_active_holder(controller, holder, "collect-agent receipt write")
+def require_lease(run: Path, holder: dict[str, str] | None) -> None:
+    """Refuse receipt writes unless the ledger and active lease allow them."""
+    snap = ledger.replay(run)
+    if snap.get("truncated_tail"):
+        raise ioutil.PreconditionError("events.jsonl has truncated tail; recover before writing receipts")
+    graph_model.require_active_holder(snap["controller"], holder, "collect-agent receipt write")
 
 
 def recorded_base(run: Path, identity: dict[str, Any]) -> str | None:
@@ -245,12 +247,11 @@ def _git(worktree: str, *args: str, git_facts: GitFacts | None = None) -> str:
     return proc.stdout.strip()
 
 
-def _receipt_differs(path: Path, payload: str) -> bool:
-    """True when the receipt must be replaced: absent, unreadable, or different bytes."""
-    try:
-        return path.read_bytes() != payload.encode("utf-8")
-    except OSError:
-        return True
+def _require_recorded_repo(run: Path, identity: dict[str, Any]) -> None:
+    run_doc = ledger.load_run(run)
+    recorded_repo = run_doc.get("repo") if isinstance(run_doc, dict) else None
+    if isinstance(recorded_repo, str) and recorded_repo and identity["repo"] != recorded_repo:
+        raise ioutil.PreconditionError("dispatch identity repo does not match run repo")
 
 
 def publish_vcs(
@@ -267,8 +268,8 @@ def publish_vcs(
 
     form is none when HEAD equals the recorded base or is already a promoted sha
     (`git merge-base --is-ancestor HEAD <promotion_ref>`), else commit. An existing
-    vcs.json matching the identity with result commit at current HEAD is reused
-    before form is inferred, so a commit receipt survives later promotion.
+    vcs.json matching the identity and current HEAD is reused if it records a
+    commit, so the receipt survives later promotion.
     Refuses a dirty worktree, a HEAD that does not descend from the recorded
     base, or an existing vcs.json with different content (attempt artifacts are
     immutable).
@@ -283,6 +284,7 @@ def publish_vcs(
     run, node, attempt = context
     attempt_dir = attempt_dir_for(context)
     require_writer_identity(identity)
+    _require_recorded_repo(run, identity)
     worktree = identity["worktree_path"]
     facts = git_facts if git_facts is not None else GitFacts(worktree)
     if _git(worktree, "status", "--porcelain", "--untracked-files=all", git_facts=facts):
@@ -292,16 +294,6 @@ def publish_vcs(
     if facts.git(worktree, "merge-base", "--is-ancestor", base, head).returncode != 0:
         raise ioutil.PreconditionError(f"worktree HEAD {head[:12]} does not descend from recorded base {base[:12]}")
     vcs_path = attempt_dir / "vcs.json"
-    existing = load_json(vcs_path) if vcs_path.is_file() else None
-    if (
-        isinstance(existing, dict)
-        and existing.get("worktree") == worktree
-        and existing.get("repo") == identity["repo"]
-        and existing.get("branch") == identity["branch"]
-        and existing.get("base_sha") == base
-        and existing.get("result") == {"form": "commit", "sha": head}
-    ):
-        return vcs_path
     on_promoted = not force and bool(promotion_ref) and facts.git(worktree, "merge-base", "--is-ancestor", head, promotion_ref).returncode == 0
     result = {"form": "none"} if head == base or on_promoted else {"form": "commit", "sha": head}
     vcs = {
@@ -312,14 +304,26 @@ def publish_vcs(
         "result": result,
     }
     payload = json.dumps(vcs, indent=1, sort_keys=True) + "\n"
-    if existing is not None:
-        if existing == vcs:
+    with ledger.with_lock(run, lock_timeout=lock_timeout, node=node):
+        require_lease(run, holder)
+        if not vcs_path.exists():
+            ioutil.atomic_text(vcs_path, payload)
+            return vcs_path
+        if not vcs_path.is_file():
+            raise ioutil.PreconditionError("vcs.json already exists and is not a file")
+        existing = load_json(vcs_path)
+        if existing == vcs or (
+            isinstance(existing, dict)
+            and existing.get("worktree") == worktree
+            and existing.get("repo") == identity["repo"]
+            and existing.get("branch") == identity["branch"]
+            and existing.get("base_sha") == base
+            and existing.get("result") == {"form": "commit", "sha": head}
+        ):
             return vcs_path
         if not force:
             raise ioutil.PreconditionError("vcs.json already exists with different content")
-        overwrite_forced_artifact(run, node, int(attempt), vcs_path, payload, holder=holder, lock_timeout=lock_timeout)
-        return vcs_path
-    ioutil.atomic_text(vcs_path, payload)
+    overwrite_forced_artifact(run, node, int(attempt), vcs_path, payload, holder=holder, lock_timeout=lock_timeout)
     return vcs_path
 
 def attach_artifacts(agent: dict[str, Any], context: tuple[Path, str, str], identity: dict[str, Any], force=False, holder: dict[str, str] | None = None, *, git_facts: GitFacts | None = None, lock_timeout=120) -> dict[str, Any]:
@@ -338,10 +342,7 @@ def attach_artifacts(agent: dict[str, Any], context: tuple[Path, str, str], iden
     needs_integration = declares_output(outputs, "integration") or integration_path.is_file()
     if writer or needs_integration:
         require_writer_identity(identity)
-        run_doc = ledger.load_run(run)
-        recorded_repo = run_doc.get("repo") if isinstance(run_doc, dict) else None
-        if isinstance(recorded_repo, str) and recorded_repo and identity["repo"] != recorded_repo:
-            raise ioutil.PreconditionError("dispatch identity repo does not match run repo")
+        _require_recorded_repo(run, identity)
         if not vcs_path.is_file():
             raise ioutil.PreconditionError("missing vcs.json for integration output" if needs_integration else "missing vcs.json for writer")
     extra_artifacts: list[dict[str, str]] = []
@@ -370,27 +371,27 @@ def attach_artifacts(agent: dict[str, Any], context: tuple[Path, str, str], iden
         "summary": agent["summary"],
         "question": agent.get("question"),
     }
+    if agent.get("session_path"):
+        summary["session_path"] = agent["session_path"]
     summary_path = attempt_dir / "summary.json"
     payload = json.dumps(summary, sort_keys=True) + "\n"
-    if force and _receipt_differs(summary_path, payload):
-        try:
+    try:
+        if force:
             overwrite_forced_artifact(run, node, int(attempt), summary_path, payload, holder=holder, lock_timeout=lock_timeout)
-        except OSError as exc:
-            raise ioutil.PreconditionError(f"cannot write summary.json: {exc}") from exc
-    else:
-        try:
-            with summary_path.open("x", encoding="utf-8") as fh:
-                fh.write(payload)
-        except FileExistsError:
-            try:
-                existing = summary_path.read_bytes()
-                data = json.loads(existing)
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise ioutil.PreconditionError("summary.json already exists") from exc
-            if data != summary:
-                raise ioutil.PreconditionError("summary.json already exists")
-        except OSError as exc:
-            raise ioutil.PreconditionError(f"cannot write summary.json: {exc}") from exc
+        else:
+            with ledger.with_lock(run, lock_timeout=lock_timeout, node=node):
+                require_lease(run, holder)
+                if summary_path.exists():
+                    try:
+                        data = json.loads(summary_path.read_bytes())
+                    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        raise ioutil.PreconditionError("summary.json already exists") from exc
+                    if data != summary:
+                        raise ioutil.PreconditionError("summary.json already exists")
+                else:
+                    ioutil.atomic_text(summary_path, payload)
+    except OSError as exc:
+        raise ioutil.PreconditionError(f"cannot write summary.json: {exc}") from exc
     summary_names = [out["name"] for out in outputs if out.get("type") == "summary"]
     if not summary_names and not any(out.get("name") == "summary" for out in outputs):
         summary_names = ["summary"]
@@ -432,16 +433,21 @@ def parse_session_summary(session_path: Path) -> str:
     with session_path.open("rb") as fh:
         fh.seek(0, 2)
         position = fh.tell()
-        pending = b""
-        while position or pending:
+        pending: list[bytes] = []
+        while position > 0:
+            size = min(position, 64 * 1024)
+            position -= size
+            fh.seek(position)
+            lines = fh.read(size).split(b"\n")
+            if position and len(lines) == 1:
+                pending.append(lines[0])
+                continue
+            if pending:
+                pending.append(lines[-1])
+                lines[-1] = b"".join(reversed(pending))
+                pending.clear()
             if position:
-                size = min(position, 64 * 1024)
-                position -= size
-                fh.seek(position)
-                lines = (fh.read(size) + pending).split(b"\n")
-                pending = lines.pop(0) if position else b""
-            else:
-                lines, pending = [pending], b""
+                pending.append(lines.pop(0))
             for line in reversed(lines):
                 try:
                     row = json.loads(line)

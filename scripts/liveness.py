@@ -58,15 +58,19 @@ def maybe_interrupt_native(state: dict[str, Any], current_session: str | None, l
     return events
 
 
-def _herdr_live_triple(record: dict[str, Any], executor: str) -> tuple[str | None, str | None, str | None] | None:
-    parsed = parse_herdr_identity(record, executor, require_context=False)
-    return None if parsed is None else (parsed["workspace"], parsed["pane"], parsed["target"])
-
-
 def _herdr_live_surface(record: dict[str, Any]) -> tuple[str, str] | None:
     if not isinstance(record, dict):
         return None
     values = (record.get("workspace"), record.get("pane"))
+    if not all(isinstance(value, str) and value for value in values):
+        return None
+    return values
+
+
+def _herdr_live_triple(record: dict[str, Any]) -> tuple[str, str, str] | None:
+    if not isinstance(record, dict):
+        return None
+    values = (record.get("workspace"), record.get("pane"), record.get("agent"))
     if not all(isinstance(value, str) and value for value in values):
         return None
     return values
@@ -124,33 +128,36 @@ def maybe_interrupt_herdr(state: dict[str, Any], live_herdr: object) -> list[dic
         if executor not in HERDR_EXECUTORS or not _observable_orphan(node):
             continue
         recorded = recorded_herdr_identity(state, node_id, node)
-        matched = None
-        if parse_herdr_identity(recorded, executor, require_context=True) is not None:
+        identity = parse_herdr_identity(recorded, executor, require_context=False)
+        recorded_surface = _herdr_live_surface(recorded)
+        observed = None
+        if identity is not None:
+            kind, target = identity["identity_kind"], identity["target"]
             for record in records:
-                if herdr_identity_matches(recorded, record, executor):
-                    matched = record
-                    break
-        if matched is not None:
+                live = parse_herdr_identity(record, executor, require_context=False)
+                if live is None or live["identity_kind"] != kind or live["target"] != target:
+                    continue
+                if observed is not None:
+                    raise PreconditionError(f"duplicate live Herdr identity for {node_id}: {target}")
+                if kind == graph_model.IDENTITY_MANAGED_NAME and _herdr_live_surface(record) != recorded_surface:
+                    raise PreconditionError(f"live Herdr worker {target} for {node_id} is on an unexpected surface")
+                observed = record
+        if observed is not None and herdr_identity_matches(recorded, observed, executor):
             recovered = herdr_ready_dispatch_candidate(state, node_id, node)
             if recovered:
                 events.append(recovered)
-            elif node.get("state") == "running" and matched.get("agent_status") == "blocked":
-                reason = matched.get("reason") or matched.get("question") or "blocked"
+            if node.get("state") == "running" and observed.get("agent_status") == "blocked":
+                reason = observed.get("reason") or observed.get("question") or "blocked"
                 blocked = {"type": "blocked", "node": node_id, "from": "running", "to": "blocked", "attempt": node.get("attempt", 0), "reason": reason}
-                if "question" in matched:
-                    blocked["question"] = matched.get("question")
+                if "question" in observed:
+                    blocked["question"] = observed.get("question")
                 events.append(blocked)
             continue
-        recorded_triple = _herdr_live_triple(recorded, executor)
-        if recorded_triple is not None and any(
-            _herdr_live_triple(record, executor) == recorded_triple and not _herdr_stamp_complete(record)
-            for record in records
-        ):
+        if observed is not None and _herdr_live_surface(observed) == recorded_surface and not _herdr_stamp_complete(observed):
             continue
-        recorded_surface = _herdr_live_surface(recorded)
         if (
             recorded_surface is not None
-            and parse_herdr_identity(recorded, executor, require_context=False) is None
+            and identity is None
             and any(_herdr_live_surface(record) == recorded_surface for record in records)
         ):
             continue

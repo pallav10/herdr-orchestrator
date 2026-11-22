@@ -6,11 +6,11 @@ Usage: finish-agent.py --run RUN --node N --attempt A --session S --holder-works
 Does, in one idempotent step:
   1. load identity and refuse a dirty tree or HEAD that does not descend from --since (default: merge-base of promotion_ref and HEAD, else identity base)
   2. classify changed files against dispatch_intent.owns (working-tree only for integrators)
-  3. integrators: refuse when HEAD is still on the promoted line; write integration.json from vcs-typed consumed receipts
-  4. collect-agent.py --publish-vcs
-  5. refuse a node that declared a worktree and finished at vcs form none: it committed
-     nothing, which for a writer means its prompt never ran (--force records it anyway)
-  6. writers: append succeeded with declared-output artifacts; integrators: print the promote call (no succeeded)
+  3. load the verdict and authenticate the live worker before writing integration receipts
+  4. collect-agent.py --publish-vcs (status-only for non-passing integrators)
+  5. record non-passing verdicts before checking for missing commits
+  6. writers: append succeeded with declared-output artifacts; integrators: print promote call (no succeeded)
+     worktree writers need a commit unless --force; running integrators need a commit beyond the promoted line
 
 --force re-collects instead of trusting the recorded receipts: it re-reads the pane,
 re-derives vcs.json from the worktree's current HEAD, rewrites integration.json, and
@@ -38,7 +38,7 @@ import graph_model
 import ioutil
 import cli_common
 
-from artifacts import consumed_items, overwrite_forced_artifact
+from artifacts import consumed_items
 CLI_EXTRA_CODES = {RuntimeError: 1}
 import ledger
 import receipts
@@ -73,10 +73,9 @@ def _consumed_entry(item: dict[str, Any]) -> dict[str, Any]:
 def _promote_string(run: str | Path, node_id: str, attempt: int, new_sha: str, repo: str | Path, holder: dict[str, str] | None, *, lock_timeout=120) -> str:
     run_s = ioutil.canonical_path(run)
     repo_s = ioutil.canonical_path(repo)
-    holder_s = json.dumps(holder)
     return (
-        f'run_state.promote("{run_s}", node="{node_id}", attempt={int(attempt)}, '
-        f'new_sha="{new_sha}", repo="{repo_s}", holder={holder_s}, lock_timeout={lock_timeout})'
+        f'run_state.promote({run_s!r}, node={json.dumps(node_id, ensure_ascii=False)}, attempt={int(attempt)}, '
+        f'new_sha={new_sha!r}, repo={repo_s!r}, holder={holder!r}, lock_timeout={lock_timeout})'
     )
 
 
@@ -124,15 +123,24 @@ def _print_result(
     print(json.dumps(payload))
 
 
-def _write_integration_receipt(run_doc: dict[str, Any], graph: dict[str, Any], attempt_dir: Path, wt: str | None, head: str, *, force: bool = False, holder=None, git_facts: GitFacts | None = None, lock_timeout=120) -> bool:
-    """Write integration.json; returns True when it replaced a different existing receipt."""
-    promo = run_doc.get("promotion_ref")
-    if head == run_doc.get("base_sha") or (
-        isinstance(promo, str)
-        and promo
-        and _git(wt, "merge-base", "--is-ancestor", "HEAD", promo, git_facts=git_facts).returncode == 0
-    ):
-        raise ioutil.PreconditionError("integrator has no commit beyond the promoted line")
+def _finish_node(snap: dict[str, Any], node_id: str, attempt: int, holder, *, expected_state=None) -> dict[str, Any]:
+    if snap.get("truncated_tail"):
+        raise ioutil.PreconditionError("events.jsonl has truncated tail; recover before appending")
+    graph_model.require_active_holder(snap["controller"], holder, "finish-agent")
+    node = (snap["state"].get("nodes") or {}).get(node_id)
+    if not isinstance(node, dict):
+        raise ioutil.PreconditionError(f"unknown node {node_id!r}")
+    if attempt != int(node.get("attempt") or 0):
+        raise ioutil.PreconditionError(
+            f"attempt {attempt} does not match current attempt {node.get('attempt', 0)}"
+        )
+    allowed_states = {"running", "succeeded"} if expected_state is None else {expected_state}
+    if node.get("state") not in allowed_states:
+        raise ioutil.PreconditionError(f"cannot finish {node_id} from state {node.get('state')!r}")
+    return node
+
+
+def _write_integration_receipt(run: Path, run_doc: dict[str, Any], graph: dict[str, Any], attempt_dir: Path, head: str, *, node_id: str, attempt: int, state: str, force: bool, holder, lock_timeout) -> None:
     items = []
     consumed_path = attempt_dir / "consumed_artifacts.json"
     if consumed_path.is_file():
@@ -144,20 +152,26 @@ def _write_integration_receipt(run_doc: dict[str, Any], graph: dict[str, Any], a
         "consumed": [_consumed_entry(item) for item in receipts.vcs_typed_consumed(graph, items)],
     }
     integration_path = attempt_dir / "integration.json"
-    if integration_path.is_file():
-        existing = json.loads(integration_path.read_text(encoding="utf-8"))
-        if existing == payload:
-            return False
-        if not force:
-            raise ioutil.PreconditionError("integration.json already exists with different content")
-        overwrite_forced_artifact(Path(run_doc["path"]), attempt_dir.parent.name, int(attempt_dir.name), integration_path, json.dumps(payload, indent=1, sort_keys=True) + "\n", holder=holder, lock_timeout=lock_timeout)
-        return True
-    ioutil.atomic_text(integration_path, json.dumps(payload, indent=1, sort_keys=True) + "\n")
-    return False
+    with ledger.with_lock(run, lock_timeout=lock_timeout, node=node_id):
+        snap = ledger.replay(run)
+        _finish_node(snap, node_id, attempt, holder, expected_state=state)
+        existed = integration_path.is_file()
+        if existed:
+            if json.loads(integration_path.read_text(encoding="utf-8")) == payload:
+                return
+            if not force:
+                raise ioutil.PreconditionError("integration.json already exists with different content")
+            ledger._repair_dispatch_snapshots_locked(run, snap)
+        ioutil.atomic_text(integration_path, json.dumps(payload, indent=1, sort_keys=True) + "\n")
+        if existed:
+            ledger.append_event_locked(
+                run, {"type": "artifact_forced", "node": node_id, "attempt": attempt, "forced": [integration_path.name]},
+                holder=holder,
+            )
 
 
-def _collect_declared_artifacts(identity: dict[str, Any], run: Path, node_id: str, attempt: int, graph: dict[str, Any], wt: str | None, args) -> list[dict[str, Any]]:
-    """Run collect-agent.py for this attempt and keep only graph-declared artifacts."""
+def _collect_declared_artifacts(identity: dict[str, Any], run: Path, node_id: str, attempt: int, graph: dict[str, Any], wt: str | None, args, *, status_only=False) -> list[dict[str, Any]]:
+    """Authenticate the worker; unless status-only, collect declared artifacts."""
     target = identity.get("worker_id") or identity.get("agent")
     if not isinstance(target, str) or not target:
         raise ioutil.PreconditionError("dispatch identity missing worker_id/agent")
@@ -173,14 +187,19 @@ def _collect_declared_artifacts(identity: dict[str, Any], run: Path, node_id: st
         "--holder-pane", args.holder_pane,
         "--lock-timeout", str(args.lock_timeout),
     ]
-    if wt:
-        argv.append("--publish-vcs")
-    if args.force:
-        argv.append("--force")
+    if status_only:
+        argv.append("--status-only")
+    else:
+        if wt:
+            argv.append("--publish-vcs")
+        if args.force:
+            argv.append("--force")
     result = run_child(argv, "collect-agent.py")
     agents = result.get("agents") if isinstance(result, dict) else None
     if not isinstance(agents, list) or not agents or not isinstance(agents[0], dict):
         raise ioutil.PreconditionError("collect-agent.py returned no agents")
+    if status_only:
+        return []
     artifacts = agents[0].get("artifacts") if isinstance(agents[0].get("artifacts"), list) else []
     declared = graph_model.output_specs(graph, node_id)
     return [row for row in artifacts if isinstance(row, dict) and graph_model.artifact_name(row) in declared]
@@ -211,16 +230,8 @@ def main() -> int:
 
     run_doc = ledger.load_run(run)
     graph = ledger.load_graph(run)
-    snap = ledger.replay(run)
-    # gate every write below (integration receipt, forced unlink, succeeded event), not just --force
-    graph_model.require_active_holder(snap["controller"], holder, "finish-agent")
-    node = (snap["state"].get("nodes") or {}).get(node_id)
-    if not isinstance(node, dict):
-        raise ioutil.PreconditionError("unknown node")
-    if int(node.get("attempt") or 0) != attempt:
-        raise ioutil.PreconditionError(
-            f"attempt {attempt} does not match current attempt {node.get('attempt', 0)}"
-        )
+    node = _finish_node(ledger.replay(run), node_id, attempt, holder)
+    already_succeeded = node["state"] == "succeeded"
     attempt_dir = ledger.attempt_dir(run, node_id, attempt)
     identity = ledger.load_dispatch_identity(attempt_dir)
     if not isinstance(identity, dict):
@@ -235,9 +246,7 @@ def main() -> int:
     git_facts = GitFacts(wt) if wt else None
     head_proc = _git(wt, "rev-parse", "HEAD", git_facts=git_facts) if wt else None
     head = head_proc.stdout.strip() if head_proc is not None and head_proc.returncode == 0 else ""
-    promote = None
-    if integrator:
-        promote = _promote_string(run, node_id, attempt, head, run_doc.get("repo") or identity.get("repo") or "", holder, lock_timeout=args.lock_timeout)
+    verdict_doc = verdict_mod.load_and_validate_verdict(attempt_dir)
     
     since = None
     if wt:
@@ -247,11 +256,10 @@ def main() -> int:
             since = merge.stdout.strip() if merge.returncode == 0 else None
         since = since or identity.get("base")
     
-    already_succeeded = node.get("state") == "succeeded"
+    non_passing = not already_succeeded and verdict_doc is not None and verdict_doc["status"] != "pass"
     if already_succeeded and not args.force:
         artifacts = node.get("artifacts") if isinstance(node.get("artifacts"), list) else []
-        verdict_doc = verdict_mod.load_and_validate_verdict(attempt_dir)
-        _print_result(node_id, attempt, "succeeded", _vcs_form(attempt_dir), artifacts, [], promote, since, verdict_doc=verdict_doc)
+        _print_result(node_id, attempt, "succeeded", _vcs_form(attempt_dir), artifacts, [], None, since, verdict_doc=verdict_doc)
         return 0
     
     if wt:
@@ -281,13 +289,27 @@ def main() -> int:
             raise ioutil.PreconditionError(f"unowned files: {', '.join(offending)}")
     
     if integrator:
-        _write_integration_receipt(run_doc, graph, attempt_dir, wt, head, force=args.force, holder=holder, git_facts=git_facts, lock_timeout=args.lock_timeout)
-    
-    artifacts = _collect_declared_artifacts(identity, run, node_id, attempt, graph, wt, args)
+        if not already_succeeded and not non_passing:
+            promo = run_doc.get("promotion_ref")
+            if head == run_doc.get("base_sha") or (
+                isinstance(promo, str)
+                and promo
+                and _git(wt, "merge-base", "--is-ancestor", "HEAD", promo, git_facts=git_facts).returncode == 0
+            ):
+                raise ioutil.PreconditionError("integrator has no commit beyond the promoted line")
+        _collect_declared_artifacts(identity, run, node_id, attempt, graph, wt, args, status_only=True)
+        if not non_passing:
+            _write_integration_receipt(
+                run, run_doc, graph, attempt_dir, head, node_id=node_id, attempt=attempt,
+                state=node["state"], force=args.force, holder=holder, lock_timeout=args.lock_timeout,
+            )
+
+    artifacts = [] if integrator and non_passing else _collect_declared_artifacts(
+        identity, run, node_id, attempt, graph, wt, args,
+    )
     vcs_form = _vcs_form(attempt_dir)
     
-    node_plan = (graph.get("nodes") or {}).get(node_id) or {}
-    if vcs_form == "none" and node_plan.get("worktree") and not integrator and not args.force:
+    if not non_passing and vcs_form == "none" and plan.get("worktree") and not integrator and not args.force:
         # a node that asked for its own worktree and committed nothing produced nothing;
         # in practice its prompt never ran. Mirrors the integrator's commit requirement.
         _print_result(node_id, attempt, node.get("state"), vcs_form, artifacts, [], None, since)
@@ -297,29 +319,25 @@ def main() -> int:
             "the node, or pass --force to record the empty result deliberately"
         )
     
-    verdict_doc = verdict_mod.load_and_validate_verdict(attempt_dir)
-
-    if verdict_doc is not None and verdict_doc["status"] in {"fail", "rework"} and not already_succeeded:
+    if non_passing:
         status = verdict_doc["status"]
         rework_target = verdict_doc.get("rework_target") if status == "rework" else None
-        reason = "verdict:rework" if status == "rework" else (verdict_doc["summary"] or "verdict:fail")
-        fail_event: dict[str, Any] = {
-            "type": "failed",
+        outcome = "blocked" if status == "blocked" else "failed"
+        reason = "verdict:rework" if status == "rework" else (verdict_doc["summary"] or f"verdict:{status}")
+        outcome_event: dict[str, Any] = {
+            "type": outcome,
             "node": node_id,
             "from": "running",
-            "to": "failed",
+            "to": outcome,
             "attempt": attempt,
             "reason": reason,
         }
         fhash = verdict_mod.findings_hash(verdict_doc["findings"])
         if fhash is not None:
-            fail_event["findings_hash"] = fhash
-        appended = ledger.append_event(
-            run,
-            fail_event,
-            holder=holder,
-            lock_timeout=args.lock_timeout,
-        )
+            outcome_event["findings_hash"] = fhash
+        with ledger.with_lock(run, lock_timeout=args.lock_timeout, node=node_id):
+            _finish_node(ledger.replay(run), node_id, attempt, holder, expected_state="running")
+            appended = ledger.append_event_locked(run, outcome_event, holder=holder)
         final = appended["state"]["nodes"][node_id]
         _print_result(
             node_id,
@@ -335,14 +353,15 @@ def main() -> int:
         )
         return 0
 
-    if integrator:
-        _print_result(node_id, attempt, node.get("state"), vcs_form, artifacts, [], promote, since, verdict_doc=verdict_doc)
-        return 0
-
     if already_succeeded:
         # `succeeded` requires a running attempt: --force refreshes and audits the
         # receipts of a terminal attempt, it never re-records the attempt itself.
         _print_result(node_id, attempt, "succeeded", vcs_form, artifacts, [], None, since, verdict_doc=verdict_doc)
+        return 0
+
+    if integrator:
+        promote = _promote_string(run, node_id, attempt, head, run_doc.get("repo") or identity.get("repo") or "", holder, lock_timeout=args.lock_timeout)
+        _print_result(node_id, attempt, node["state"], vcs_form, artifacts, [], promote, since, verdict_doc=verdict_doc)
         return 0
 
     appended = ledger.append_event(

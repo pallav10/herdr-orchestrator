@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import tempfile
@@ -12,7 +13,8 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 
-from testkit import FakeHerdr, HOLDER, commit_file, git, load_script, run_module, seed_repo
+from artifacts import overwrite_forced_artifact
+from testkit import FakeHerdr, HOLDER, commit_file, git, load_script, new_run, run_module, seed_repo
 HOLDER_ARGS = ["--session", HOLDER["session"], "--holder-workspace", HOLDER["workspace"], "--holder-pane", HOLDER["pane"]]
 
 
@@ -767,6 +769,47 @@ class TestCollectionContracts(unittest.TestCase):
             self.assertIn("promotion requires a commit vcs result", err)
             self.assertFalse(wrote)
 
+    def test_first_collection_refuses_truncated_event_tail_before_writing_receipts(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            run, attempt, identity, _, _ = self.plant(tmp)
+            (attempt / "vcs.json").unlink()
+            with (run / "events.jsonl").open("ab") as fh:
+                fh.write(b'{"type":')
+
+            code, _, err, wrote = self.collect(tmp, run, identity, extra=["--publish-vcs"])
+
+            self.assertEqual(code, 3)
+            self.assertIn("truncated tail", err)
+            self.assertFalse((attempt / "vcs.json").exists())
+            self.assertFalse(wrote)
+
+    def test_publish_vcs_refuses_repo_mismatch_without_leaving_receipts(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            run, attempt, identity, _, _ = self.plant(tmp)
+            (attempt / "vcs.json").unlink()
+            identity["repo"] = str(seed_repo(tmp / "other-repo").resolve())
+            (attempt / "dispatch-identity.json").write_text(json.dumps(identity) + "\n", encoding="utf-8")
+
+            code, _, err, wrote = self.collect(tmp, run, identity, extra=["--publish-vcs"])
+
+            self.assertEqual(code, 3)
+            self.assertIn("repo does not match run repo", err)
+            self.assertFalse((attempt / "vcs.json").exists())
+            self.assertFalse(wrote)
+
+    def test_collect_preserves_session_path_in_summary_receipt(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            run, attempt, identity, _, _ = self.plant(tmp)
+
+            code, _, err, _ = self.collect(tmp, run, identity)
+
+            self.assertEqual(code, 0, err)
+            summary = json.loads((attempt / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["session_path"], str(tmp / "session.jsonl"))
+
     def test_collect_force_overwrites_summary(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
@@ -810,7 +853,45 @@ class TestCollectionContracts(unittest.TestCase):
 
 
 
+class TestForcedArtifactContracts(unittest.TestCase):
+    def test_force_audits_changed_bytes_once_with_the_new_hash(self):
+        with tempfile.TemporaryDirectory() as td:
+            graph = {
+                "schema_version": 1,
+                "nodes": {"B": {"id": "B", "executor": "herdr-agent", "outputs": [{"name": "summary", "type": "summary"}]}},
+            }
+            run = new_run(Path(td), graph)
+            path = run / "artifacts" / "B" / "1" / "summary.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            original = '{"summary": "original"}\n'
+            revised = '{"summary": "révisé"}\n'
+            path.write_bytes(original.encode("utf-8"))
+
+            overwrite_forced_artifact(run, "B", 1, path, original, holder=HOLDER)
+            self.assertFalse(any(row["type"] == "artifact_forced" for row in events(run)))
+
+            overwrite_forced_artifact(run, "B", 1, path, revised, holder=HOLDER)
+            overwrite_forced_artifact(run, "B", 1, path, revised, holder=HOLDER)
+
+            self.assertEqual(path.read_bytes(), revised.encode("utf-8"))
+            forced = [row for row in events(run) if row["type"] == "artifact_forced"]
+            self.assertEqual(len(forced), 1)
+            self.assertEqual(forced[0]["forced"], [path.name])
+            expected_hash = "sha256:" + hashlib.sha256(revised.encode("utf-8")).hexdigest()
+            self.assertEqual(forced[0]["hashes"], {path.name: expected_hash})
+
+
 class TestSummaryTailContracts(unittest.TestCase):
+    def test_single_large_jsonl_record_spanning_multiple_blocks(self):
+        module = load_script("collect-agent.py")
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "session.jsonl"
+            text = "é" * (64 * 1024) + " done"
+            row = {"type": "message", "message": {"role": "assistant", "content": text}}
+            path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+
+            self.assertEqual(module.parse_session_summary(path), text)
+
     def test_fifty_megabyte_tail_reads_less_than_one_megabyte(self):
         from unittest.mock import patch
         module = load_script("collect-agent.py")

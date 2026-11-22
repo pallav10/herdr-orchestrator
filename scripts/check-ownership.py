@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Check changed file ownership against a deterministic slice manifest."""
 
+from __future__ import annotations
+
 import argparse
 import json
 from pathlib import Path
@@ -8,19 +10,41 @@ from typing import Any
 
 import ioutil
 import ledger
+from graph_model import NODE_ID_RE
 from ownership import normalize_manifest, load_manifest, resolve_diff_base, git_changed_paths, git_committed_paths, partition_paths_by_slice
 
 import cli_common
+
+
 def load_run_manifest(run: Path, node: str, attempt: str | None) -> tuple[list[str], dict[str, list[str]], str | None]:
-    node_dir = Path(run) / "artifacts" / node
+    if not NODE_ID_RE.fullmatch(node):
+        raise ioutil.UsageError(f"--node {node!r} must match {NODE_ID_RE.pattern}")
+    if attempt is not None and not (attempt.isascii() and attempt.isdigit() and attempt.strip("0")):
+        raise ioutil.UsageError("--attempt must be a positive ASCII integer")
+
+    artifacts = run.resolve() / "artifacts"
+
+    def resolve_artifact(path: Path) -> Path:
+        try:
+            resolved = path.resolve()
+        except (OSError, RuntimeError) as exc:
+            raise ioutil.PreconditionError(f"cannot resolve {path}: {exc}") from exc
+        if artifacts not in resolved.parents:
+            raise ioutil.PreconditionError(f"{path} resolves outside {artifacts}")
+        return resolved
+
+    node_dir = resolve_artifact(artifacts / node)
     if attempt is None:
-        names = [p.name for p in node_dir.iterdir() if p.is_dir() and p.name.isdigit()] if node_dir.is_dir() else []
+        names = [
+            p.name for p in node_dir.iterdir()
+            if p.name.isascii() and p.name.isdigit() and p.name.strip("0") and p.is_dir()
+        ] if node_dir.is_dir() else []
         if not names:
             raise FileNotFoundError(f"missing {node_dir}")
         attempt = max(names, key=lambda name: int(name))
-    attempt_dir = node_dir / str(attempt)
-    ownership_path = attempt_dir / "ownership.json"
-    identity_path = attempt_dir / "dispatch-identity.json"
+    attempt_dir = resolve_artifact(node_dir / attempt)
+    ownership_path = resolve_artifact(attempt_dir / "ownership.json")
+    identity_path = resolve_artifact(attempt_dir / "dispatch-identity.json")
     for path in (ownership_path, identity_path):
         if not path.is_file():
             raise FileNotFoundError(f"missing {path}")
