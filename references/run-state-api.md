@@ -17,6 +17,25 @@ Import `run_state` with `scripts/` on the Python path. It is the explicit contro
 | `validate_graph(graph)` | `None` on valid graph; otherwise refusal, no accepted revision. |
 | `accept_graph(RUN, graph, repo=REPO, holder=H, lock_timeout=120)` | Accepted graph document: `schema_version`, `run`, `base_sha`, `promotion_ref`, `nodes`. |
 
+Minimal read-only graph accepted by `validate_graph`:
+
+```json
+{
+  "schema_version": 1,
+  "nodes": {
+    "inspect": {
+      "id": "inspect",
+      "executor": "herdr-agent",
+      "outputs": [{"name": "inspection", "type": "summary"}]
+    }
+  }
+}
+```
+
+Key `nodes` by `node.id`. Each output has a `name` and a `type` (`summary`, `vcs`, or `integration`). Names identify outputs in the graph; summary outputs refer to the attempt's `summary.json`, regardless of their declared names.
+
+For a read-only Herdr node (no worktree, owned paths, VCS output, or integration output), `dispatch-agent.py --cwd DIR` may target any existing directory. The run remains anchored to its accepted repository. Worktree launches still require a `--cwd` in the accepted repository or one of its worktrees.
+
 State has `schema_version`, `run`, `epoch`, `nodes`, `notified`, `dispatch`; nodes carry executor/attempt/state, reason/question, recorded routing/handle, artifacts and immutable dispatch/consumption history. Controller has `epoch`, `workspace`, `pane`, `session`, `run`, `dispatch`, `lease`. Applied `events` omit skipped stale post-transfer mutations; replay preserves valid pre-transfer history. Notification keys are sorted/unique; do not confuse the full state notification history with notifications emitted by the current call.
 
 Acceptance validates IDs (`[A-Za-z0-9][A-Za-z0-9._-]{0,31}`), unique aliases, dependency graph, serialized ownership overlaps and contained artifact paths, exact holder and canonical repository. It records the immutable base — `HEAD` of the supplied canonical `repo` at first acceptance, the recorded value afterwards — and initializes the run-owned promotion ref once through recoverable committed graph revisions. A `base_sha` submitted in the graph does not select or validate the base and a mismatch is not refused; read the returned `base_sha` and compare it with the commit the briefs assume before any dispatch (see [continuing a previous candidate](controller-playbook.md#211-accepted-base-and-continuing-a-previous-candidate)). Active nodes retain all accepted fields except metadata-only `phase`; revisions compare accepted plans rather than concrete runtime model/handle overlays. Acceptance must finish before any dispatch.

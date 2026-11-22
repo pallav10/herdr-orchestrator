@@ -937,7 +937,7 @@ def check_spawn_premutation_failures() -> None:
                 "--cwd", str(Path(td) / "other-repo"),
             ])
             T.assertEqual(code, 2)
-            T.assertIn('--cwd must resolve to accepted run repo', err)
+            T.assertIn('--cwd must be an existing directory', err)
             T.assertEqual(fake.calls, [])
 
             run = Path(td) / "refs" / "run-abc"
@@ -2307,7 +2307,7 @@ def check_spawn_human_labels() -> None:
     T.assertIn('4', alias)
     T.assertEqual(label('worker'), 'worker')
 
-def check_spawn_readonly_cwd_accepts_repo_worktree() -> None:
+def check_spawn_readonly_cwd_accepts_linked_and_external_dirs() -> None:
     module = load_script("spawn-agent.py")
     original = module.herdr
     try:
@@ -2325,13 +2325,13 @@ def check_spawn_readonly_cwd_accepts_repo_worktree() -> None:
             create_call = next(call for call in fake.calls if call[:2] == ("workspace", "create"))
             T.assertEqual(create_call[create_call.index('--cwd') + 1], str(linked.resolve()))
 
-            run2, _ = attempt_tree(Path(td) / "refused")
+            run2, _ = attempt_tree(Path(td) / "external-cwd")
             fake = spawn_herdr()
             module.herdr = fake
             code, _, err = run_module(module, _spawn_argv(run2, "--cwd", str(other)))
-            T.assertEqual(code, 2)
-            T.assertIn('or one of its worktrees', err)
-            T.assertEqual(fake.calls, [])
+            T.assertEqual(code, 0, err)
+            create_call = next(call for call in fake.calls if call[:2] == ("workspace", "create"))
+            T.assertEqual(create_call[create_call.index('--cwd') + 1], str(other.resolve()))
     finally:
         module.herdr = original
 
