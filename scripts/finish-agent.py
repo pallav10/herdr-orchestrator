@@ -43,6 +43,7 @@ CLI_EXTRA_CODES = {RuntimeError: 1}
 import ledger
 import receipts
 from receipts import GitFacts, writer_path_findings
+import verdict as verdict_mod
 
 from cli_common import SCRIPTS, holder_from_args, run_child
 
@@ -93,8 +94,20 @@ def _vcs_form(attempt_dir: Path) -> str | None:
     return None
 
 
-def _print_result(node_id: str, attempt: int, state: str, vcs_form: str | None, artifacts: list[dict[str, Any]], unowned: list[dict[str, Any]], promote: str | None, since: str | None = None) -> None:
-    print(json.dumps({
+def _print_result(
+    node_id: str,
+    attempt: int,
+    state: str,
+    vcs_form: str | None,
+    artifacts: list[dict[str, Any]],
+    unowned: list[dict[str, Any]],
+    promote: str | None,
+    since: str | None = None,
+    *,
+    verdict_doc: dict[str, Any] | None = None,
+    rework_target: str | None = None,
+) -> None:
+    payload: dict[str, Any] = {
         "node": node_id,
         "attempt": attempt,
         "state": state,
@@ -103,7 +116,12 @@ def _print_result(node_id: str, attempt: int, state: str, vcs_form: str | None, 
         "unowned": unowned,
         "promote": promote,
         "since": since,
-    }))
+    }
+    if verdict_doc is not None:
+        payload["verdict"] = verdict_doc
+    if rework_target is not None:
+        payload["rework_target"] = rework_target
+    print(json.dumps(payload))
 
 
 def _write_integration_receipt(run_doc: dict[str, Any], graph: dict[str, Any], attempt_dir: Path, wt: str | None, head: str, *, force: bool = False, holder=None, git_facts: GitFacts | None = None, lock_timeout=120) -> bool:
@@ -232,7 +250,8 @@ def main() -> int:
     already_succeeded = node.get("state") == "succeeded"
     if already_succeeded and not args.force:
         artifacts = node.get("artifacts") if isinstance(node.get("artifacts"), list) else []
-        _print_result(node_id, attempt, "succeeded", _vcs_form(attempt_dir), artifacts, [], promote, since)
+        verdict_doc = verdict_mod.load_and_validate_verdict(attempt_dir)
+        _print_result(node_id, attempt, "succeeded", _vcs_form(attempt_dir), artifacts, [], promote, since, verdict_doc=verdict_doc)
         return 0
     
     if wt:
@@ -278,16 +297,54 @@ def main() -> int:
             "the node, or pass --force to record the empty result deliberately"
         )
     
-    if integrator:
-        _print_result(node_id, attempt, node.get("state"), vcs_form, artifacts, [], promote, since)
+    verdict_doc = verdict_mod.load_and_validate_verdict(attempt_dir)
+
+    if verdict_doc is not None and verdict_doc["status"] in {"fail", "rework"} and not already_succeeded:
+        status = verdict_doc["status"]
+        rework_target = verdict_doc.get("rework_target") if status == "rework" else None
+        reason = "verdict:rework" if status == "rework" else (verdict_doc["summary"] or "verdict:fail")
+        fail_event: dict[str, Any] = {
+            "type": "failed",
+            "node": node_id,
+            "from": "running",
+            "to": "failed",
+            "attempt": attempt,
+            "reason": reason,
+        }
+        fhash = verdict_mod.findings_hash(verdict_doc["findings"])
+        if fhash is not None:
+            fail_event["findings_hash"] = fhash
+        appended = ledger.append_event(
+            run,
+            fail_event,
+            holder=holder,
+            lock_timeout=args.lock_timeout,
+        )
+        final = appended["state"]["nodes"][node_id]
+        _print_result(
+            node_id,
+            attempt,
+            final.get("state"),
+            vcs_form,
+            artifacts,
+            [],
+            None,
+            since,
+            verdict_doc=verdict_doc,
+            rework_target=rework_target,
+        )
         return 0
-    
+
+    if integrator:
+        _print_result(node_id, attempt, node.get("state"), vcs_form, artifacts, [], promote, since, verdict_doc=verdict_doc)
+        return 0
+
     if already_succeeded:
         # `succeeded` requires a running attempt: --force refreshes and audits the
         # receipts of a terminal attempt, it never re-records the attempt itself.
-        _print_result(node_id, attempt, "succeeded", vcs_form, artifacts, [], None, since)
+        _print_result(node_id, attempt, "succeeded", vcs_form, artifacts, [], None, since, verdict_doc=verdict_doc)
         return 0
-    
+
     appended = ledger.append_event(
         run,
         {
@@ -302,7 +359,7 @@ def main() -> int:
         lock_timeout=args.lock_timeout,
     )
     final = appended["state"]["nodes"][node_id]
-    _print_result(node_id, attempt, final.get("state"), vcs_form, artifacts, [], None, since)
+    _print_result(node_id, attempt, final.get("state"), vcs_form, artifacts, [], None, since, verdict_doc=verdict_doc)
     return 0
 
 

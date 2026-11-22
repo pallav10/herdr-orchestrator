@@ -42,8 +42,9 @@ Lock-taking entrypoints accept `--lock-timeout SECONDS`: finite positive, defaul
 - `monitor-agents.py` — change-only adaptive polling by default; `--every-poll` prints each poll, `--min-interval` sets initial/reset cadence.
 - `collect-agent.py` — status/summaries and immutable receipts; stdout summary capped at 1,500 characters, `--full-summary` uncaps it.
 - `check-ownership.py` — classify slice changes; run mode derives the writer's merge-base, manifest mode accepts `--base`/`--since`.
-- `finish-agent.py` — collect, validate ownership/receipts, and record success or print integrator promotion call; optional `--since`/`--force`.
+- `finish-agent.py` — collect, validate ownership/receipts and optional `verdict.json`, and record success/failure or print integrator promotion call; optional `--since`/`--force`.
 - `promote-run.py` — CLI wrapper for `promotion.promote` (default) or `promotion.deliver_branch` (`--deliver-only [--branch BRANCH]`) with holder flags and `--lock-timeout`.
+- `invalidate-node.py` — selectively invalidate a succeeded node (and optional transitive dependents with `--cascade`/`--no-cascade`), append `retried` when allowed or `--retry` is set, and persist optional `--feedback` to the next attempt's `feedback.md`.
 - `retire-agents.py` — receipt-gated closure of orchestrator-created surfaces; optional `--collect`/`--force-unsettled` do not bypass run gates.
 - `rotate.py` — measured-context gate, lease drain, native quiescence, successor bootstrap and exact acknowledgment.
 - `ack-handoff.py` — successor session creation/recovery and exact nonce/holder lease transfer.
