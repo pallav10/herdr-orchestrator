@@ -95,7 +95,7 @@ def load_and_validate_verdict(attempt_dir: str | Path) -> dict[str, Any] | None:
         raise PreconditionError(f"verdict path must be a regular file: {path}")
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise PreconditionError(f"invalid verdict.json at {path}: {exc}") from exc
     return validate_verdict(raw)
 
@@ -130,7 +130,7 @@ def detect_rework_stagnation(
         if not isinstance(event, dict) or event.get("node") != node_id:
             continue
         typ = event.get("type")
-        if typ not in REWORK_STATES and typ != "succeeded":
+        if typ not in REWORK_STATES and typ not in {"succeeded", "interrupted", "skipped"}:
             continue
         raw_attempt = event.get("attempt")
         if isinstance(raw_attempt, bool) or not isinstance(raw_attempt, int) or raw_attempt < 1:
@@ -140,8 +140,8 @@ def detect_rework_stagnation(
             raw_attempt,
             {"attempt": raw_attempt, "outcome": None, "reason": None, "findings_hash": None},
         )
-        if typ == "succeeded":
-            entry["outcome"] = "succeeded"
+        if typ not in REWORK_STATES:
+            entry["outcome"] = typ
             continue
 
         # failed/invalidated take precedence over retried for reason/outcome attribution
@@ -180,6 +180,8 @@ def detect_rework_stagnation(
     hashes = [item["findings_hash"] for item in tail]
     same_reason = reasons[0] if reasons[0] and all(r == reasons[0] for r in reasons) else None
     same_hash = hashes[0] if hashes[0] and all(h == hashes[0] for h in hashes) else None
+    if same_reason == "verdict:rework" and not same_hash and any(hashes):
+        same_reason = None
     stagnated = bool(same_reason or same_hash)
 
     return {

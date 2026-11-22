@@ -21,6 +21,7 @@ import sys
 import tempfile
 import time
 import uuid
+import verdict
 from ioutil import PreconditionError, RunError, UsageError, _git_ref, _now, _read_json, _run_git, slug, consumed_items, atomic_json, atomic_text, canonical_path, run_cmd, sha256_file
 from graph_model import HERDR_EXECUTORS, HOLDER_KEYS, LEASE_ACTIVE, LEASE_DRAINING, MODEL_KEYS, NODE_ID_RE, RETRY_ON, RUNTIME_KEYS, SCHEMA_VERSION, STATES, _as_list, _attempt_int, _check_holder, _condition_true, _eligible_blocked_continuation, _holder_payload, _request_fields, _required_attempt, _retry_allows, artifact_name, current_artifact, has_current_dispatch_intent, herdr_command_target, herdr_identity_matches, holder_exact, output_specs, require_active_holder, validate_continuation_routing, validate_graph, validate_model
 
@@ -217,6 +218,8 @@ def _validate_revision_against_runtime(run_dir: Path, state: dict[str, Any], gra
         if not isinstance(node, dict):
             continue
         candidate = new_nodes.get(node_id)
+        if node.get("state") == "ready" and has_current_dispatch_intent(node) and node_id not in new_nodes:
+            raise PreconditionError(f"cannot remove node {node_id} with current dispatch_intent")
         if node.get("state") == "ready" and has_current_dispatch_intent(node) and isinstance(candidate, dict):
             # ownership.json is an immutable per-attempt snapshot of the intent's owns
             if list(_as_list(candidate.get("owns"), f"{node_id}.owns")) != list(node.get("dispatch_intent", {}).get("owns") or []):
@@ -660,7 +663,7 @@ def read_consumed_snapshot(run_dir: Path, node_id: str, attempt: int) -> list[di
     return consumed
 
 
-def _authoritative_consumed(run_dir: Path, node_id: str, attempt: int, node: dict[str, Any]) -> list[dict[str, Any]]:
+def _authoritative_consumed(run_dir: Path, node_id: str, attempt: int, node: dict[str, Any], *, state: dict[str, Any]) -> list[dict[str, Any]]:
     intent = node.get("dispatch_intent") if isinstance(node.get("dispatch_intent"), dict) else {}
     consumed = intent.get("consumed")
     owns = intent.get("owns")
@@ -670,6 +673,13 @@ def _authoritative_consumed(run_dir: Path, node_id: str, attempt: int, node: dic
     for item in consumed:
         if not isinstance(item, dict) or not isinstance(item.get("path"), str) or not isinstance(item.get("hash"), str):
             raise PreconditionError("dispatch_intent missing immutable snapshot data")
+        producer = item.get("producer")
+        if not isinstance(producer, str):
+            raise PreconditionError("dispatch_intent consumed artifact missing producer")
+        producer_attempt = _attempt_int(item.get("producer_attempt"), "producer_attempt")
+        producer_node = state["nodes"].get(producer)
+        if not producer_node or producer_node.get("state") != "succeeded" or int(producer_node.get("attempt", 0)) != producer_attempt:
+            raise PreconditionError(f"consumed producer {producer} is not succeeded at attempt {producer_attempt}")
         if _file_hash(Path(item["path"])) != item["hash"]:
             raise PreconditionError("consumed artifact hash mismatch")
     return consumed
@@ -734,11 +744,11 @@ def writer_path_findings(repo_root: str, node_id: str, owns: list, *, integrates
         changed = set() if not status.stdout.strip() else set(ownership.git_changed_paths(repo_root))
     else:
         changed = set(ownership.git_changed_paths(repo_root))
-    if not integrates and since:
+    if not (integrates and "**" in owns) and since:
         if git_facts is None:
             changed |= set(ownership.git_committed_paths(repo_root, since))
         else:
-            diff = git_facts.git(repo_root, "diff", "--name-only", "-z", f"{since}..HEAD")
+            diff = git_facts.git(repo_root, "diff", "--name-only", "--no-renames", "-z", f"{since}..HEAD")
             if diff.returncode != 0:
                 raise PreconditionError(diff.stderr.decode("utf-8", "surrogateescape").strip() or "git diff failed")
             changed.update(path.decode("utf-8", "surrogateescape") for path in diff.stdout.split(b"\0") if path)
@@ -798,7 +808,7 @@ def _validate_writer_gates(run_dir: Path, node_id: str, attempt: int, node: dict
         raise PreconditionError("ownership.json does not match dispatch_intent")
     repo_root = canonical_path(vcs["worktree"])
     integrates = any(isinstance(o, dict) and o.get("type") == "integration" for o in (node.get("outputs") or []))
-    committed = not integrates and isinstance(vcs.get("result"), dict) and vcs["result"].get("form") == "commit"
+    committed = not (integrates and "**" in owns) and isinstance(vcs.get("result"), dict) and vcs["result"].get("form") == "commit"
     baseline = since if committed else None
     if committed and not baseline:
         if git_facts is None:
@@ -948,24 +958,33 @@ def validate_integration_payload(path: Path, consumed: list[dict[str, Any]], *, 
             raise PreconditionError("integration consumed alias mismatch")
 
 
-def _promotion_artifacts(run_dir: Path, graph: dict[str, Any], node_id: str, attempt: int, node: dict[str, Any], new_sha: str) -> list[dict[str, Any]]:
+def _promotion_artifacts(run_dir: Path, graph: dict[str, Any], node_id: str, attempt: int, node: dict[str, Any], new_sha: str, *, state: dict[str, Any]) -> list[dict[str, Any]]:
     specs = output_specs(graph, node_id)
     if "integration" not in specs.values() or "vcs" not in specs.values():
         raise PreconditionError("promotion requires declared integration and vcs outputs")
     attempt_path = attempt_dir(run_dir, node_id, attempt)
-    consumed = vcs_typed_consumed(graph, _authoritative_consumed(run_dir, node_id, attempt, node))
-    integration_path = attempt_path / "integration.json"
-    vcs_path = attempt_path / "vcs.json"
+    result = verdict.load_and_validate_verdict(attempt_path)
+    if result is not None and result["status"] != "pass":
+        raise PreconditionError("promotion requires a passing verdict")
+    paths = {}
+    for typ in specs.values():
+        path = attempt_path / _artifact_file_name(typ)
+        resolved = Path(canonical_path(path))
+        if not _relative_to(resolved, attempt_path) or resolved.name != path.name:
+            raise PreconditionError(f"artifact {typ} path is not attempt-local with its declared filename")
+        paths[typ] = resolved
+    consumed = vcs_typed_consumed(graph, _authoritative_consumed(run_dir, node_id, attempt, node, state=state))
+    integration_path = paths["integration"]
+    vcs_path = paths["vcs"]
     run = load_run(run_dir)
     validate_integration_payload(integration_path, consumed, expected_sha=new_sha, expected_base=run.get("base_sha"))
     validate_vcs_payload(vcs_path, expected_sha=new_sha, require_commit=True, attempt_dir=attempt_path)
     _validate_writer_gates(run_dir, node_id, attempt, node, vcs_path)
 
-    records: dict[str, dict[str, Any]] = {}
-    for name, typ in specs.items():
-        path = attempt_path / _artifact_file_name(typ)
-        records[name] = {"name": name, "type": typ, "path": str(path), "hash": _file_hash(path)}
-    return [records[name] for name in specs]
+    return [
+        {"name": name, "type": typ, "path": str(paths[typ]), "hash": _file_hash(paths[typ])}
+        for name, typ in specs.items()
+    ]
 
 
 def _matching_promoted_event(events: list[dict[str, Any]], node_id: str, attempt: int) -> dict[str, Any] | None:
@@ -1259,7 +1278,7 @@ def _validate_event_append(run_dir: Path, snap: dict[str, Any], graph: dict[str,
         expected_old = _previous_promotion_sha(snap["events"], run.get("base_sha"))
         if event.get("expected_old") != expected_old:
             raise PreconditionError("promotion_intent expected_old does not match prior promoted sha")
-        event["artifacts"] = _promotion_artifacts(run_dir, graph, node_id, attempt, node, new_sha)
+        event["artifacts"] = _promotion_artifacts(run_dir, graph, node_id, attempt, node, new_sha, state=snap["state"])
         return
 
     if typ == "promoted":
@@ -1363,6 +1382,15 @@ def _apply_event(state: dict[str, Any], controller: dict[str, Any], graph: dict[
             node["model"] = event["model"]
     elif typ in {"promotion_intent", "promoted"}:
         node[typ] = {k: v for k, v in event.items() if k != "type"}
+    elif typ == "artifact_forced":
+        artifacts = node.get("artifacts")
+        hashes = event.get("hashes")
+        if int(event.get("attempt", 0)) == int(node.get("attempt", 0)) and isinstance(artifacts, list) and isinstance(hashes, dict):
+            updated = []
+            for artifact in artifacts:
+                filename = Path(artifact["path"]).name if isinstance(artifact.get("path"), str) else _artifact_file_name(artifact.get("type"))
+                updated.append({**artifact, "hash": hashes[filename]} if filename in hashes else artifact)
+            node["artifacts"] = updated
 
 
 def _runtime_overlay(existing: dict[str, Any]) -> dict[str, Any]:

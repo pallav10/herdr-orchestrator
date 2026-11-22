@@ -270,7 +270,7 @@ class RunStateContractTest(unittest.TestCase):
                     "executor": "herdr-agent",
                     "outputs": [{"name": "integration", "type": "integration"}, {"name": "vcs", "type": "vcs"}],
                     "worktree": "d",
-                    "owns": ["src/d/**"],
+                    "owns": ["**"],
                     "depends_on": ["B", "C"],
                     "inputs": [
                         {"alias": "b_patch", "from": "B", "output": "patch", "required": True},
@@ -341,6 +341,101 @@ class RunStateContractTest(unittest.TestCase):
         self.write_attempt_receipts(run, "D", 1, sha)
         return run, repo, sha
 
+    def test_promote_refuses_commit_that_diverges_from_previous_promotion(self):
+        graph = self.promotion_graph()
+        graph["nodes"]["E"] = {**graph["nodes"]["D"], "id": "E", "worktree": "e", "owns": ["src/e/**"]}
+        repo = self.repo()
+        run = self.new_run(graph, repo)
+        holder = self.run_holder(run)
+        ref = self.load_run_json(run)["promotion_ref"]
+        shas = {}
+        for node in ("D", "E"):
+            self.start_attempt(run, node)
+            wt = Path(self.identity_for(run, node, 1)["worktree_path"])
+            shas[node] = self.commit_file(wt, f"src/{node.lower()}/result.txt", f"{node}\n")
+            self.write_attempt_receipts(run, node, 1, shas[node])
+        promotion.promote(run, node="D", attempt=1, new_sha=shas["D"], repo=repo, holder=holder)
+
+        events_file = Path(run) / "events.jsonl"
+        events = events_file.read_bytes()
+        with self.assertRaisesRegex(run_state.PreconditionError, "not descended from"):
+            promotion.promote(run, node="E", attempt=1, new_sha=shas["E"], repo=repo, holder=holder)
+        self.assertEqual(self.git_ref(repo, ref), shas["D"])
+        self.assertEqual(events_file.read_bytes(), events)
+
+    def test_promote_refuses_symbolic_promotion_ref(self):
+        run, repo, sha = self.promoted_run()
+        run_json = self.load_run_json(run)
+        ref, base = run_json["promotion_ref"], run_json["base_sha"]
+        target = "refs/heads/promotion-target"
+        self.git(repo, "update-ref", target, base)
+        self.git(repo, "symbolic-ref", ref, target)
+        with self.assertRaisesRegex(run_state.PreconditionError, "symbolic ref"):
+            promotion.promote(run, node="D", attempt=1, new_sha=sha, repo=repo, holder=self.run_holder(run))
+        self.assertEqual(self.git(repo, "symbolic-ref", ref), target)
+        self.assertEqual(self.git_ref(repo, target), base)
+
+    def test_promote_refuses_unclosed_promotion_intent(self):
+        run, repo, sha, run_json = self.pending_promotion_run(ref_at="old")
+        events_file = Path(run) / "events.jsonl"
+        events = events_file.read_bytes()
+        with self.assertRaisesRegex(run_state.PreconditionError, "unfinished promotion intent"):
+            promotion.promote(run, node="D", attempt=1, new_sha=sha, repo=repo, holder=self.run_holder(run))
+        self.assertEqual(self.git_ref(repo, run_json["promotion_ref"]), run_json["base_sha"])
+        self.assertEqual(events_file.read_bytes(), events)
+
+    def test_promote_refuses_nonpassing_verdict(self):
+        run, repo, sha = self.promoted_run()
+        verdict = {"status": "fail", "summary": "Checks failed", "findings": []}
+        (self.attempt_dir(run, "D", 1) / "verdict.json").write_text(json.dumps(verdict), encoding="utf-8")
+        with self.assertRaisesRegex(run_state.PreconditionError, "requires a passing verdict"):
+            promotion.promote(run, node="D", attempt=1, new_sha=sha, repo=repo, holder=self.run_holder(run))
+
+    def test_promote_refuses_escaping_output_symlink(self):
+        run, repo, sha = self.promoted_run()
+        vcs = self.attempt_dir(run, "D", 1) / "vcs.json"
+        outside = self.root / vcs.name
+        vcs.rename(outside)
+        vcs.symlink_to(outside)
+        with self.assertRaisesRegex(run_state.PreconditionError, "artifact vcs path.*attempt-local"):
+            promotion.promote(run, node="D", attempt=1, new_sha=sha, repo=repo, holder=self.run_holder(run))
+
+    def test_promote_requires_running_current_attempt(self):
+        run, repo, sha = self.promoted_run()
+        holder = self.run_holder(run)
+        self.append_event(run, {"type": "failed", "node": "D", "attempt": 1})
+        with self.assertRaisesRegex(run_state.PreconditionError, "D running at attempt 1"):
+            promotion.promote(run, node="D", attempt=1, new_sha=sha, repo=repo, holder=holder)
+
+        self.append_event(run, {"type": "retried", "node": "D", "attempt": 1, "reason": "failed"})
+        self.reconcile(run)
+        self.start_attempt(run, "D", attempt=2)
+        with self.assertRaisesRegex(run_state.PreconditionError, "D running at attempt 1"):
+            promotion.promote(run, node="D", attempt=1, new_sha=sha, repo=repo, holder=holder)
+
+    def test_narrow_integrator_cannot_commit_outside_owned_paths(self):
+        run, _repo, _sha = self.promoted_run()
+        wt = Path(self.identity_for(run, "D", 1)["worktree_path"])
+        sha = self.commit_file(wt, "src/elsewhere.txt", "unowned\n")
+        self.write_attempt_receipts(run, "D", 1, sha)
+        node = run_state.replay(run)["state"]["nodes"]["D"]
+        with self.assertRaisesRegex(run_state.PreconditionError, r"ownership check failed: .*src/elsewhere\.txt"):
+            ledger._validate_writer_gates(Path(run), "D", 1, node, self.attempt_dir(run, "D", 1) / "vcs.json")
+
+    def test_authoritative_consumed_requires_succeeded_recorded_producer_attempt(self):
+        run, *_rest = self.plant_integrated_d()
+        state = run_state.replay(run)["state"]
+        nodes = state["nodes"]
+        node = nodes["D"]
+        producer = nodes["B"]
+        self.assertEqual(producer["attempt"], 2)
+        for status, attempt in (("invalidated", 2), ("succeeded", 3)):
+            candidate = {**state, "nodes": {**nodes, "B": {**producer, "state": status, "attempt": attempt}}}
+            with self.subTest(status=status, attempt=attempt), self.assertRaisesRegex(
+                run_state.PreconditionError, "consumed producer B is not succeeded at attempt 2",
+            ):
+                ledger._authoritative_consumed(Path(run), "D", 1, node, state=candidate)
+
     def test_promote_publishes_descriptive_delivery_branch(self):
         run, repo, sha = self.promoted_run("Studio run review of FlowOps")
         result = run_state.promote(run, node="D", attempt=1, new_sha=sha, repo=repo, holder=self.run_holder(run))
@@ -404,6 +499,33 @@ class RunStateContractTest(unittest.TestCase):
         for bad in ("", "feature/bad..name", "refs/tags/v1", "-x", "feature/trailing/"):
             with self.subTest(branch=bad), self.assertRaises(run_state.PreconditionError):
                 run_state.deliver_branch(run, repo=repo, holder=self.run_holder(run), branch=bad)
+
+    def test_delivery_branch_ref_refuses_head(self):
+        with self.assertRaisesRegex(run_state.PreconditionError, "invalid delivery branch"):
+            promotion.delivery_branch_ref("HEAD")
+
+    def test_deliver_branch_refuses_truncated_ledger(self):
+        run, repo, sha = self.promoted_run()
+        holder = self.run_holder(run)
+        promotion.promote(run, node="D", attempt=1, new_sha=sha, repo=repo, holder=holder)
+        events_file = Path(run) / "events.jsonl"
+        events = events_file.read_bytes() + b"{"
+        events_file.write_bytes(events)
+        with self.assertRaisesRegex(run_state.PreconditionError, "truncated tail"):
+            promotion.deliver_branch(run, repo=repo, holder=holder, branch="feature/another-delivery")
+        self.assertIsNone(self.git_ref(repo, "refs/heads/feature/another-delivery"))
+        self.assertEqual(events_file.read_bytes(), events)
+
+    def test_recover_promotion_refuses_truncated_ledger(self):
+        run, repo, _sha, run_json = self.pending_promotion_run(ref_at="old")
+        holder = self.run_holder(run)
+        events_file = Path(run) / "events.jsonl"
+        events = events_file.read_bytes() + b"{"
+        events_file.write_bytes(events)
+        with self.assertRaisesRegex(run_state.PreconditionError, "truncated tail"):
+            promotion.recover_promotion(run, repo, holder=holder)
+        self.assertEqual(self.git_ref(repo, run_json["promotion_ref"]), run_json["base_sha"])
+        self.assertEqual(events_file.read_bytes(), events)
 
     def test_recovery_ensures_delivery_branch_and_refuses_undelivered_run(self):
         run, repo, new_sha, run_json = self.pending_promotion_run(ref_at="new")
@@ -1524,16 +1646,13 @@ class RunStateContractTest(unittest.TestCase):
         self.assertEqual(result["state"]["nodes"]["D"]["state"], "ready")
         self.assertEqual(result["state"]["nodes"]["D"]["attempt"], 2)
 
-        self.start_attempt(run, "D", attempt=2)
-        d2 = self.identity_for(run, "D", 2)
-        d2_wt = Path(d2["worktree_path"])
+        d2_wt = self.make_worktree(repo, node="D", attempt=2, base=d1_sha)
+        self.start_attempt(run, "D", attempt=2, handle={"worktree_path": str(d2_wt.resolve()), "branch": self.git(d2_wt, "branch", "--show-current")})
         self.assertNotEqual(d2_wt.resolve(), d1_wt.resolve())
-        self.assertEqual(self.git(d2_wt, "rev-parse", "HEAD"), base)
-        self.git(d2_wt, "cherry-pick", b3_sha)
-        self.git(d2_wt, "cherry-pick", c_sha)
-        d2_sha = self.git(d2_wt, "rev-parse", "HEAD")
+        self.assertEqual(self.git(d2_wt, "rev-parse", "HEAD"), d1_sha)
+        d2_sha = self.commit_file(d2_wt, "src/b/b.txt", "b3\n")
         self.assertNotEqual(d2_sha, d1_sha)
-        self.assertEqual(self.git_ok(repo, "merge-base", "--is-ancestor", base, d2_sha)[0], 0)
+        self.assertEqual(self.git_ok(repo, "merge-base", "--is-ancestor", d1_sha, d2_sha)[0], 0)
         self.write_attempt_receipts(
             run, "D", 2, d2_sha,
             consumed=self.receipt_consumed(self.snapshot_consumed(run, "D", 2), attempt_key="producer_attempt"),
@@ -2104,7 +2223,7 @@ class RunStateContractTest(unittest.TestCase):
             "executor": "herdr-agent",
             "outputs": [{"name": "integration", "type": "integration"}, {"name": "vcs", "type": "vcs"}],
             "worktree": "d",
-            "owns": ["src/d/**"],
+            "owns": ["**"],
             "depends_on": ["W1"],
             "inputs": [{"alias": "w1", "from": "W1", "output": "vcs", "required": True}],
         }

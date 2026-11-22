@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 import ownership
-from testkit import load_script
+from testkit import git, load_script, seed_repo
 
 check_ownership = load_script("check-ownership.py")
 
@@ -77,6 +77,39 @@ class PartitionTest(unittest.TestCase):
         )
         self.assertEqual(unowned, [])
         self.assertEqual(by_slice["a"], ["/some/other/root/src/a/x.py"])
+
+    def test_overlap_and_partition_ignore_outer_slashes(self):
+        glob = "/src/a/*/"
+        path = "src/a/x.py"
+        self.assertTrue(ownership.owns_overlap(glob, path))
+        self.assertEqual(
+            ownership.partition_paths_by_slice([f"/{path}/"], "/repo", {"a": [glob]}),
+            ([], [], {"a": ["/repo/src/a/x.py"]}),
+        )
+
+
+class GlobOverlapTest(unittest.TestCase):
+    def test_inverted_range_matches_nothing_unless_negated(self):
+        for other in ("src/a.py", "src/b.py", "src/*.py"):
+            with self.subTest(other=other):
+                self.assertFalse(ownership.owns_overlap("src/[b-a].py", other))
+                self.assertTrue(ownership.owns_overlap("src/[!b-a].py", other))
+
+
+class GitCommittedPathsTest(unittest.TestCase):
+    def test_rename_keeps_unowned_source_even_with_rename_detection_enabled(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = seed_repo(Path(td) / "repo")
+            base = git(repo, "rev-parse", "HEAD")
+            git(repo, "config", "diff.renames", "true")
+            git(repo, "mv", "file.txt", "owned.txt")
+            git(repo, "commit", "-m", "rename into owned path")
+
+            paths = ownership.git_committed_paths(str(repo), base)
+            self.assertEqual(
+                ownership.partition_paths_by_slice(paths, str(repo), {"a": ["owned.txt"]}),
+                ([str(repo / "file.txt")], [], {"a": [str(repo / "owned.txt")]}),
+            )
 
 
 class ResolveDiffBaseTest(unittest.TestCase):

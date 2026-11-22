@@ -29,7 +29,8 @@ def _computed_lifecycle_events(state: dict[str, Any], graph: dict[str, Any]) -> 
             continue
         plan = plans.get(node_id, {})
         attempt = int(node.get("attempt", 0))
-        for inp in plan.get("inputs", []) or []:
+        inputs = plan.get("inputs", []) or []
+        for inp in inputs:
             if inp.get("required", True) and nodes.get(inp["from"], {}).get("state") == "skipped":
                 reason = f"input {inp['alias']} missing"
                 if cur != "blocked" or node.get("reason") != reason:
@@ -37,7 +38,20 @@ def _computed_lifecycle_events(state: dict[str, Any], graph: dict[str, Any]) -> 
                 break
         else:
             deps = plan.get("depends_on", []) or []
-            failed = next((dep for dep in deps if nodes.get(dep, {}).get("state") in {"failed", "interrupted"}), None)
+            optional_producers = {inp["from"] for inp in inputs if not inp.get("required", True)}
+            failed = None
+            for dep in deps:
+                dependency = nodes.get(dep, {})
+                dep_state = dependency.get("state")
+                if (
+                    dep_state in {"failed", "interrupted"}
+                    or (dep_state == "skipped" and dep not in optional_producers)
+                    or (dep_state == "invalidated" and not _retry_allows(plans.get(dep, {}), "invalidated", int(dependency.get("attempt", 0))))
+                    # Reconciliation applies the invalidation policy before lifecycle scheduling.
+                    or (dep_state == "blocked" and dependency.get("reason") == "invalidated digest")
+                ):
+                    failed = dep
+                    break
             if failed:
                 reason = f"dep {failed} is {nodes[failed]['state']}"
                 if cur != "blocked" or node.get("reason") != reason:
@@ -47,7 +61,7 @@ def _computed_lifecycle_events(state: dict[str, Any], graph: dict[str, Any]) -> 
                 if cur in {"blocked", "ready"}:
                     events.append({"type": "planned", "node": node_id, "from": cur, "to": "planned", "attempt": attempt, "reason": "dependencies pending"})
                 continue
-            for inp in plan.get("inputs", []) or []:
+            for inp in inputs:
                 if inp.get("required", True):
                     art = current_artifact(state, inp["from"], inp["output"])
                     if not art or not art.get("path") or not art.get("hash"):

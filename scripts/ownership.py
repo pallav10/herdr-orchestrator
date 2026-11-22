@@ -140,7 +140,7 @@ def git_changed_paths(repo_root: str) -> list[str]:
 
 def git_committed_paths(repo_root: str, base: str) -> list[str]:
     proc = _git(
-        ["git", "-C", repo_root, "diff", "--name-only", "-z", f"{base}..HEAD"],
+        ["git", "-C", repo_root, "diff", "--no-renames", "--name-only", "-z", f"{base}..HEAD"],
         capture_output=True,
     )
     if proc.returncode != 0:
@@ -168,8 +168,9 @@ def partition_paths_by_slice(paths: list[str], repo_root: str, slices: dict[str,
     by_slice: dict[str, list[str]] = {name: [] for name in slices}
 
     for rel in paths:
+        rel = rel.strip("/")
         abs_path = str(Path(repo_root, rel))
-        matches = [name for name, globs in slices.items() if any(fnmatch.fnmatch(rel, pat) for pat in globs)]
+        matches = [name for name, globs in slices.items() if any(fnmatch.fnmatch(rel, pat.strip("/")) for pat in globs)]
         if not matches:
             unowned.append(abs_path)
             continue
@@ -210,10 +211,9 @@ def _parse_charclass(pattern: str, i: int, n: int) -> tuple[frozenset[str], bool
     while k < len(body):
         if k + 2 < len(body) and body[k + 1] == '-':
             lo, hi = ord(body[k]), ord(body[k + 2])
-            if lo <= hi:
-                chars.update(chr(x) for x in range(lo, hi + 1))
-                k += 3
-                continue
+            chars.update(chr(x) for x in range(lo, hi + 1))
+            k += 3
+            continue
         chars.add(body[k])
         k += 1
     return frozenset(chars), bool(neg), j + 1
@@ -276,6 +276,8 @@ def _glob_consume(index: int, tokens: list[tuple]) -> list[tuple]:
         return [(None, index + 1)]
     if kind == 'c':
         return [((False, frozenset((token[1],))), index + 1)]
+    if not token[1] and not token[2]:
+        return []
     return [((token[1], token[2]), index + 1)]
 
 
@@ -318,7 +320,7 @@ def _fnmatch_intersects(left: str, right: str) -> bool:
 def owns_overlap(a: str, b: str) -> bool:
     a = os.path.normcase(a.strip("/"))
     b = os.path.normcase(b.strip("/"))
-    return a == b or _fnmatch_intersects(a, b)
+    return _fnmatch_intersects(a, b)
 
 
 if __name__ == "__main__":
