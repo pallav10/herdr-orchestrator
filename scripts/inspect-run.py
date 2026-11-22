@@ -135,6 +135,7 @@ def _infer_next_actions(
     actions: list[dict[str, Any]] = []
     controller = snap["controller"]
     nodes = snap["state"].get("nodes", {})
+    graph = ledger.load_graph(run_dir)
 
     if snap.get("truncated_tail"):
         actions.append({
@@ -155,12 +156,16 @@ def _infer_next_actions(
         state = node.get("state")
         attempt = int(node.get("attempt", 0) or 0)
         executor = node.get("executor")
-        integrates = bool(node.get("integrates"))
+        integrates = bool(node.get("integrates")) or graph_model.declares_output(
+            ((graph.get("nodes") or {}).get(node_id) or {}).get("outputs") or [], "integration"
+        )
         handle = node.get("handle") if isinstance(node.get("handle"), dict) else {}
 
         if state == "ready":
             if executor in graph_model.HERDR_EXECUTORS:
                 detail = f"dispatch-agent.py --run {run_dir} --node {node_id}"
+            elif executor == "script":
+                detail = f"run-script.py --run {run_dir} --node {node_id}"
             else:
                 detail = f"dispatch native {executor} node {node_id}"
             actions.append({"action": "dispatch", "node": node_id, "detail": detail})

@@ -53,7 +53,7 @@ def _ho_cmd(*args: str) -> str:
 
 def _find_docs_root(explicit: str | None) -> Path | None:
     if explicit:
-        return Path(ioutil.canonical_path(explicit))
+        return Path(ioutil.canonical_path(Path(explicit).expanduser().resolve()))
     cwd = Path.cwd().resolve()
     for candidate in (cwd, *cwd.parents):
         docs = candidate / "docs"
@@ -128,15 +128,16 @@ def _resolve_context(
     snap: dict[str, Any] | None = None
     if run_path is not None and (run_path / "run.json").is_file():
         snap = ledger.replay(run_path)
-        ctrl = snap.get("controller") if isinstance(snap.get("controller"), dict) else {}
-        if session_path is None and isinstance(ctrl.get("session"), str) and ctrl["session"]:
-            if not workspace or ctrl.get("workspace") == workspace:
-                if not pane or ctrl.get("pane") == pane:
-                    session_path = Path(ioutil.canonical_path(ctrl["session"]))
-        if workspace is None and isinstance(ctrl.get("workspace"), str) and ctrl["workspace"]:
-            workspace = ctrl["workspace"]
-        if pane is None and isinstance(ctrl.get("pane"), str) and ctrl["pane"]:
-            pane = ctrl["pane"]
+        if not require_holder:
+            ctrl = snap.get("controller") if isinstance(snap.get("controller"), dict) else {}
+            if session_path is None and isinstance(ctrl.get("session"), str) and ctrl["session"]:
+                if not workspace or ctrl.get("workspace") == workspace:
+                    if not pane or ctrl.get("pane") == pane:
+                        session_path = Path(ioutil.canonical_path(ctrl["session"]))
+            if workspace is None and isinstance(ctrl.get("workspace"), str) and ctrl["workspace"]:
+                workspace = ctrl["workspace"]
+            if pane is None and isinstance(ctrl.get("pane"), str) and ctrl["pane"]:
+                pane = ctrl["pane"]
 
     holder: dict[str, str] | None = None
     if workspace and pane and session_path is not None:
@@ -267,20 +268,15 @@ def _needs_promotion(run_path: Path, graph: dict[str, Any], node_id: str, node: 
 
 
 def _ready_nodes_from_state(state: dict[str, Any], graph: dict[str, Any]) -> list[str]:
-    nodes = state.get("nodes") if isinstance(state.get("nodes"), dict) else {}
-    graph_nodes = graph.get("nodes") if isinstance(graph.get("nodes"), dict) else {}
-    ready: list[str] = []
-    for nid, nstate in nodes.items():
-        if not isinstance(nstate, dict):
-            continue
-        st = nstate.get("state")
-        if st == "ready":
-            ready.append(nid)
-        elif st == "planned":
-            deps = graph_nodes.get(nid, {}).get("depends_on") or []
-            if all((nodes.get(d) or {}).get("state") in {"succeeded", "skipped"} for d in deps):
-                ready.append(nid)
-    return sorted(ready)
+    nodes = state.get("nodes")
+    if not state.get("dispatch") or not isinstance(nodes, dict):
+        return []
+    plans = graph.get("nodes", {})
+    transitions = {ev["node"]: ev["to"] for ev in scheduler._computed_lifecycle_events(state, graph)}
+    return sorted(
+        nid for nid, node in nodes.items()
+        if nid in plans and transitions.get(nid, node.get("state")) == "ready"
+    )
 
 
 def _retirable_targets(run_path: Path, state: dict[str, Any], graph: dict[str, Any], live: dict[str, dict[str, Any]] | None) -> list[str]:
@@ -332,8 +328,26 @@ def _compute_next(
             "commands": [_ho_cmd("accept", "--graph", "<graph.json>", *run_flag)],
         }
 
-    # 1. Integrator promotion ready (integration.json + vcs.json already collected on running integrator)
-    promotable = [nid for nid, n in sorted(nodes.items()) if isinstance(n, dict) and _needs_promotion(run_path, graph, nid, n)]
+    plans = graph["nodes"]
+    running = [nid for nid, state in compact_nodes.items() if state == "running"]
+    settled: list[str] = []
+    promotable: list[str] = []
+    for nid in running:
+        if _needs_promotion(run_path, graph, nid, nodes[nid]):
+            promotable.append(nid)
+        elif live and plans.get(nid, {}).get("executor") == "herdr-agent":
+            target = _agent_target_for_node(run_path, nid, nodes[nid])
+            agent = live.get(target, {}) if target else {}
+            if (agent.get("agent_status") or agent.get("state")) in graph_model.SETTLED:
+                settled.append(nid)
+
+    if settled:
+        return {
+            "phase": "finish",
+            "summary": f"Settled worker(s) ready to collect and finish: {', '.join(settled)}.",
+            "nodes": compact_nodes,
+            "commands": [_ho_cmd("finish", nid, *run_flag) for nid in settled],
+        }
     if promotable:
         return {
             "phase": "promote",
@@ -342,48 +356,35 @@ def _compute_next(
             "commands": [_ho_cmd("promote", nid, *run_flag) for nid in promotable],
         }
 
-    # 2. Running nodes: check if settled (finish) or still active (monitor)
-    running = [(nid, n) for nid, n in sorted(nodes.items()) if isinstance(n, dict) and n.get("state") == "running"]
-    if running:
-        settled_nodes: list[str] = []
-        active_nodes: list[str] = []
-        for nid, n in running:
-            target = _agent_target_for_node(run_path, nid, n)
-            if live is not None and target and target in live:
-                agent_status = live[target].get("agent_status") or live[target].get("state")
-                if agent_status in graph_model.SETTLED:
-                    settled_nodes.append(nid)
-                else:
-                    active_nodes.append(nid)
+    ready = _ready_nodes_from_state(state, graph)
+    if ready:
+        commands: list[str] = []
+        external: list[str] = []
+        for nid in ready:
+            executor = plans[nid]["executor"]
+            if executor == "herdr-agent":
+                commands.append(_ho_cmd("dispatch", nid, "--prompt-file", f"<prompt-{nid}.md>", *run_flag))
+            elif executor == "script":
+                commands.append(_ho_cmd("dispatch", nid, *run_flag))
             else:
-                active_nodes.append(nid)
+                external.append(f"{nid} ({executor})")
+        summary = f"{len(ready)} ready node(s): {', '.join(ready)}."
+        if external:
+            summary += f" Use the corresponding executor for {', '.join(external)}; ho dispatch does not start them."
+        return {"phase": "dispatch", "summary": summary, "nodes": compact_nodes, "commands": commands}
 
-        if settled_nodes:
-            return {
-                "phase": "finish",
-                "summary": f"Settled worker(s) ready to collect and finish: {', '.join(settled_nodes)}.",
-                "nodes": compact_nodes,
-                "commands": [_ho_cmd("finish", nid, *run_flag) for nid in settled_nodes],
-            }
+    if running:
         return {
             "phase": "monitor",
-            "summary": f"Waiting on {len(active_nodes)} running node(s): {', '.join(active_nodes)}.",
+            "summary": f"Waiting on {len(running)} running node(s): {', '.join(running)}.",
             "nodes": compact_nodes,
             "commands": [_ho_cmd("monitor", *run_flag)],
         }
 
-    # 3. Ready nodes to dispatch
-    ready = _ready_nodes_from_state(state, graph)
-    if ready:
-        return {
-            "phase": "dispatch",
-            "summary": f"{len(ready)} ready node(s) to dispatch: {', '.join(ready)}.",
-            "nodes": compact_nodes,
-            "commands": [_ho_cmd("dispatch", nid, "--prompt-file", f"<prompt-{nid}.md>", *run_flag) for nid in ready],
-        }
-
-    # 4. Blocked / failed / interrupted nodes
-    blocked = [nid for nid, n in sorted(nodes.items()) if isinstance(n, dict) and n.get("state") in {"blocked", "failed", "interrupted"}]
+    blocked = [
+        nid for nid, state in compact_nodes.items()
+        if state in {"planned", "ready", "blocked", "failed", "interrupted", "invalidated"}
+    ]
     if blocked:
         return {
             "phase": "blocked",
@@ -484,9 +485,27 @@ def _cmd_next(args: argparse.Namespace) -> int:
 
 def _cmd_dispatch(args: argparse.Namespace) -> int:
     ctx = _resolve_context(args, require_run=True, require_holder=True, require_epoch=True)
+    graph = ledger.load_graph(ctx["run"]) or {}
+    plan = graph.get("nodes", {}).get(args.node)
+    if plan is None:
+        raise ioutil.PreconditionError(f"unknown node {args.node!r}")
+    executor = plan["executor"]
+    timeout = cli_common.CHILD_TIMEOUT
+    if executor == "herdr-agent":
+        if not (args.prompt_file or args.prompt):
+            raise ioutil.UsageError("dispatching a herdr-agent requires --prompt-file or --prompt")
+        child = "dispatch-agent.py"
+    elif executor == "script":
+        if any(value is not None for value in (args.prompt_file, args.prompt, args.model_role, args.model, args.name)):
+            raise ioutil.UsageError("prompt, model, and name options are only supported for herdr-agent nodes")
+        child = "run-script.py"
+        timeout += plan.get("timeout_sec") or 0
+    else:
+        raise ioutil.PreconditionError(f"ho dispatch does not support executor {executor!r} for node {args.node!r}")
+
     argv = [
         sys.executable,
-        str(SCRIPTS / "dispatch-agent.py"),
+        str(SCRIPTS / child),
         "--run", str(ctx["run"]),
         "--node", args.node,
         "--session", str(ctx["session"]),
@@ -507,7 +526,7 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
         argv += ["--model", args.model]
     if args.name:
         argv += ["--name", args.name]
-    result = cli_common.run_child(argv, "dispatch-agent.py")
+    result = cli_common.run_child(argv, child, timeout=timeout)
     print(json.dumps({**result, "next_command": _ho_cmd("next", "--run", str(ctx["run"]))}))
     return 0
 
@@ -654,7 +673,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
     print(json.dumps({
         "run": str(run_path),
         "epoch": ctrl.get("epoch"),
-        "lease": ctrl.get("lease_state"),
+        "lease": ctrl.get("lease"),
         "phase": nxt["phase"],
         "nodes": nxt["nodes"],
         "next_command": nxt["commands"][0] if nxt["commands"] else None,
@@ -697,7 +716,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_dispatch = sub.add_parser("dispatch", help="Dispatch a ready node with auto-context & auto-epoch")
     p_dispatch.add_argument("node", help="graph node id")
-    prompts = p_dispatch.add_mutually_exclusive_group(required=True)
+    prompts = p_dispatch.add_mutually_exclusive_group()
     prompts.add_argument("--prompt-file", default=None)
     prompts.add_argument("--prompt", default=None)
     p_dispatch.add_argument("--cwd", default=None)
@@ -729,7 +748,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_promote.set_defaults(func=_cmd_promote)
 
     p_retire = sub.add_parser("retire", help="Retire all eligible terminal orchestrator agents")
-    p_retire.add_argument("--all", action="store_true", help="retire all eligible terminal orchestrator agents")
+    p_retire.add_argument("--all", required=True, action="store_true", help="retire all eligible terminal orchestrator agents")
     _add_context_args(p_retire)
     p_retire.set_defaults(func=_cmd_retire)
 

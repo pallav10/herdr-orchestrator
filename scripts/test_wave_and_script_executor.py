@@ -78,7 +78,7 @@ class RunScriptExecutionTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_passing_script_records_hashed_receipt_and_summary_output(self):
+    def test_passing_script_records_hashed_receipt_and_named_summary_outputs(self):
         graph = {
             "schema_version": 1,
             "nodes": {
@@ -86,7 +86,14 @@ class RunScriptExecutionTest(unittest.TestCase):
                     "id": "CHECK",
                     "executor": "script",
                     "command": [sys.executable, "-c", "import sys; print('hello stdout'); print('warn stderr', file=sys.stderr)"],
-                    "outputs": [{"name": "summary", "type": "summary"}],
+                    "outputs": [{"name": name, "type": "summary"} for name in ("summary", "details")],
+                },
+                "CONSUMER": {
+                    "id": "CONSUMER",
+                    "executor": "script",
+                    "command": [sys.executable, "-c", "pass"],
+                    "depends_on": ["CHECK"],
+                    "inputs": [{"alias": "result", "from": "CHECK", "output": "details"}],
                 }
             },
         }
@@ -111,10 +118,39 @@ class RunScriptExecutionTest(unittest.TestCase):
         state = ledger.load_state(run)
         node = state["nodes"]["CHECK"]
         self.assertEqual(node["state"], "succeeded")
-        self.assertEqual(len(node["artifacts"]), 1)
-        summary_art = node["artifacts"][0]
-        self.assertEqual(summary_art["name"], "summary")
-        self.assertEqual(ioutil.sha256_file(summary_art["path"]), summary_art["hash"])
+        self.assertEqual([art["name"] for art in node["artifacts"]], ["summary", "details"])
+        for art in node["artifacts"]:
+            self.assertEqual(Path(art["path"]).name, "summary.json")
+            self.assertEqual(ioutil.sha256_file(art["path"]), art["hash"])
+        self.assertEqual(node["artifacts"][0]["path"], node["artifacts"][1]["path"])
+        code, _, err = run_module(run_script, [*_auth_args("run-script.py", run), "--node", "CONSUMER"])
+        self.assertEqual(code, 0, err)
+        consumed, = ledger.read_consumed_snapshot(run, "CONSUMER", 1)
+        self.assertEqual(consumed["output"], "details")
+        self.assertEqual(consumed["path"], node["artifacts"][1]["path"])
+        self.assertEqual(consumed["hash"], node["artifacts"][1]["hash"])
+
+    def test_invalid_script_plan_leaves_ledger_unchanged(self):
+        node = {"id": "S", "executor": "script", "command": [sys.executable, "-c", "pass"]}
+        graph = {"schema_version": 1, "nodes": {"S": node}}
+        run = new_run(self.root, graph, repo=self.repo)
+        events = run / "events.jsonl"
+        before = events.read_bytes()
+        for invalid, expected in (
+            ({"outputs": [{"name": "build", "type": "vcs"}]}, "unsupported output type"),
+            ({"outputs": [{"name": "merge", "type": "integration"}]}, "unsupported output type"),
+            ({"command": "echo 'unclosed"}, "No closing quotation"),
+            ({"timeout_sec": 0}, "timeout_sec"),
+            ({"timeout_sec": -1}, "timeout_sec"),
+        ):
+            with self.subTest(invalid=invalid):
+                # Simulate a stored plan, including values rejected by graph admission.
+                plan = {"schema_version": 1, "nodes": {"S": {**node, **invalid}}}
+                with mock.patch.object(ledger, "load_graph", return_value=plan):
+                    code, _, err = run_module(run_script, [*_auth_args("run-script.py", run), "--node", "S"])
+                self.assertEqual(code, 3, err)
+                self.assertIn(expected, err)
+                self.assertEqual(events.read_bytes(), before)
 
     def test_failing_script_records_failed_and_hashed_receipt(self):
         graph = {
@@ -276,8 +312,13 @@ class DispatchWaveTest(unittest.TestCase):
             },
             holder=HOLDER,
         )
+        ledger.append_event(
+            run,
+            {"type": "blocked", "node": "A_LEAF", "attempt": 1, "epoch": 1, "reason": "approval requested"},
+            holder=HOLDER,
+        )
 
-        # With max_parallel=2 and 1 already running, only 1 slot remains (Z_DEEP).
+        # The blocked worker occupies a slot; only one new agent can launch.
         code, out, err = run_module(
             dispatch_wave,
             [*_auth_args("dispatch-wave.py", run), "--prompts-dir", str(self.prompts), "--max-parallel", "2", "--dry-run"],
@@ -337,6 +378,48 @@ class DispatchWaveTest(unittest.TestCase):
         self.assertIn("monitor-agents.py", payload["monitor_cmd"][1])
         self.assertIn("fo-0123456789abcdef01234567", payload["monitor_cmd"])
         self.assertEqual(ledger.load_state(run)["nodes"]["S_RUN"]["state"], "succeeded")
+
+    def test_script_only_wave_does_not_require_prompts_directory(self):
+        command = [sys.executable, "-c", "pass"]
+        graph = {"schema_version": 1, "nodes": {"S": {"id": "S", "executor": "script", "command": command}}}
+        run = new_run(self.root, graph, repo=self.repo)
+        argv = _auth_args("dispatch-wave.py", run)
+        code, out, err = run_module(dispatch_wave, [*argv, "--dry-run"])
+        self.assertEqual(code, 0, err)
+        self.assertEqual([entry["node"] for entry in json.loads(out)["planned"]], ["S"])
+        with mock.patch.object(cli_common, "run_child", return_value={"state": "succeeded"}):
+            code, out, err = run_module(dispatch_wave, argv)
+        self.assertEqual(code, 0, err)
+        self.assertEqual([entry["node"] for entry in json.loads(out)["dispatched"]], ["S"])
+
+    def test_wave_reports_partial_dispatch_and_monitors_only_running_workers(self):
+        nodes = {nid: {"id": nid, "executor": "herdr-agent"} for nid in ("B", "C", "D", "E")}
+        nodes["A"] = {"id": "A", "executor": "script", "command": [sys.executable, "-c", "pass"]}
+        run = new_run(self.root, {"schema_version": 1, "nodes": nodes}, repo=self.repo)
+        for nid in ("B", "C", "D", "E"):
+            (self.prompts / f"{nid}.md").write_text("Do agent work\n", encoding="utf-8")
+        argv = _auth_args("dispatch-wave.py", run)
+        code, _, err = run_module(dispatch_wave, [*argv, "--dry-run"])
+        self.assertNotEqual(code, 0)
+        self.assertIn("--prompts-dir", err)
+
+        argv += ["--prompts-dir", str(self.prompts), "--max-parallel", "3"]
+        results = [
+            {"state": "succeeded"},
+            {"state": "running", "worker_id": "running-worker"},
+            {"state": "blocked", "worker_id": "blocked-worker"},
+            cli_common.ChildFailed(3, "could not launch worker\n"),
+        ]
+        with mock.patch.object(cli_common, "run_child", side_effect=results) as child:
+            code, out, err = run_module(dispatch_wave, argv)
+        self.assertEqual(code, 3, err)
+        self.assertEqual(child.call_count, 4)
+        payload = json.loads(out)
+        self.assertEqual([entry["node"] for entry in payload["dispatched"]], ["A", "B", "C"])
+        self.assertEqual(payload["failed"], {"node": "D", "returncode": 3, "error": "could not launch worker"})
+        self.assertEqual([entry["node"] for entry in payload["skipped"]], ["E"])
+        self.assertIn("running-worker", payload["monitor_cmd"])
+        self.assertNotIn("blocked-worker", payload["monitor_cmd"])
 
 
 if __name__ == "__main__":

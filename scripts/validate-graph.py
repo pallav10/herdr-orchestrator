@@ -99,68 +99,38 @@ def tarjan_sccs(adj: dict[str, list[str]]) -> list[list[str]]:
     return sccs
 
 
-def _canonical_cycle(cycle: list[str]) -> tuple[str, ...]:
-    if not cycle:
-        return ()
-    min_idx = min(range(len(cycle)), key=cycle.__getitem__)
-    return tuple(cycle[min_idx:] + cycle[:min_idx])
-
-
-def _shortest_cycle_from(start: str, comp_set: set[str], adj: dict[str, list[str]]) -> list[str] | None:
-    queue: deque[str] = deque()
-    parent: dict[str, str] = {}
-    for nxt in sorted(adj[start]):
-        if nxt not in comp_set:
-            continue
-        if nxt == start:
-            return [start]
-        if nxt not in parent:
-            parent[nxt] = start
-            queue.append(nxt)
-    while queue:
-        curr = queue.popleft()
-        for nxt in sorted(adj[curr]):
-            if nxt not in comp_set:
-                continue
-            if nxt == start:
-                path = [curr]
-                while path[-1] != start:
-                    path.append(parent[path[-1]])
-                path.reverse()
-                return path
-            if nxt not in parent:
-                parent[nxt] = curr
-                queue.append(nxt)
-    return None
-
-
 def find_minimal_cycles(adj: dict[str, list[str]]) -> list[list[str]]:
-    """Return all exact minimal dependency cycles derived from iterative Tarjan SCCs."""
-    seen: set[tuple[str, ...]] = set()
+    """Enumerate elementary directed cycles once, starting at their smallest node."""
     cycles: list[list[str]] = []
-    for comp in tarjan_sccs(adj):
-        if len(comp) == 1:
-            node = comp[0]
-            if node in adj[node]:
-                key = (node,)
-                if key not in seen:
-                    seen.add(key)
-                    cycles.append([node])
-            continue
-        comp_set = set(comp)
-        covered: set[str] = set()
-        for node in sorted(comp):
-            if node in covered:
+    pending = [adj]
+    while pending:
+        current = pending.pop()
+        for comp in tarjan_sccs(current):
+            start = min(comp)
+            if len(comp) == 1:
+                if start in current[start]:
+                    cycles.append([start])
                 continue
-            cycle = _shortest_cycle_from(node, comp_set, adj)
-            if cycle:
-                key = _canonical_cycle(cycle)
-                if key not in seen:
-                    seen.add(key)
-                    cycles.append(list(key))
-                covered.update(cycle)
-    cycles.sort()
-    return cycles
+            members = set(comp)
+            edges = {node: [dep for dep in current[node] if dep in members] for node in comp}
+            path = [start]
+            in_path = {start}
+            stack = [iter(edges[start])]
+            while stack:
+                dep = next(stack[-1], None)
+                if dep is None:
+                    stack.pop()
+                    in_path.remove(path.pop())
+                elif dep == start:
+                    cycles.append(path.copy())
+                elif dep not in in_path:
+                    path.append(dep)
+                    in_path.add(dep)
+                    stack.append(iter(edges[dep]))
+            # Split the remainder into SCCs before searching for cycles that omit start.
+            del edges[start]
+            pending.append({node: [dep for dep in deps if dep != start] for node, deps in edges.items()})
+    return sorted(cycles)
 
 
 def _reachable_deps(adj: dict[str, list[str]]) -> dict[str, set[str]]:
@@ -259,14 +229,26 @@ def analyze_graph(graph: Any) -> dict[str, Any]:
         adj = _adjacency(nodes)
         cycles = find_minimal_cycles(adj)
         overlaps = find_ownership_overlaps(nodes, adj)
-        if not cycles:
-            waves = compute_waves(adj)
 
     validate_error: str | None = None
     try:
+        if isinstance(nodes, dict):
+            for node_id, node in nodes.items():
+                if not isinstance(node, dict):
+                    continue
+                deps = node.get("depends_on", [])
+                if not isinstance(deps, list) or any(not isinstance(dep, str) for dep in deps):
+                    raise ioutil.PreconditionError(f"node {node_id}.depends_on must be a list of node IDs")
+                if not isinstance(node.get("outputs", []), list):
+                    raise ioutil.PreconditionError(f"node {node_id}.outputs must be list")
+                retry = node.get("retry")
+                if isinstance(retry, dict) and type(retry.get("max_attempts", 0)) is not int:
+                    raise ioutil.PreconditionError(f"node {node_id}.retry.max_attempts must be an integer")
         graph_model.validate_graph(graph)
     except ioutil.PreconditionError as exc:
         validate_error = str(exc)
+    except (TypeError, ValueError) as exc:
+        validate_error = f"invalid graph field: {exc}"
     except RecursionError:
         if not cycles:
             validate_error = "graph dependency depth exceeded recursion limit"
@@ -284,6 +266,8 @@ def analyze_graph(graph: Any) -> dict[str, Any]:
         errors.append(f"owns overlap without serialization: {left} {a!r} and {right} {b!r}")
 
     valid = not errors and not cycles and not overlaps
+    if valid and isinstance(nodes, dict):
+        waves = compute_waves(adj)
     max_parallelism = max((len(wave) for wave in waves), default=0)
     return {
         "valid": valid,

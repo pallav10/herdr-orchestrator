@@ -271,10 +271,11 @@ class InvalidateNodeTests(unittest.TestCase):
             run_state.append_event(run, {"type": "ready", "node": "A", "attempt": 2}, holder=HOLDER)
             run_state.append_event(run, {"type": "dispatch_intent", "node": "A", "attempt": 2}, holder=HOLDER)
 
-    def test_no_cascade_and_explicit_retry_flag_with_inline_feedback(self) -> None:
+    def test_no_cascade_and_explicit_retry_flag_with_long_inline_feedback(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             td = Path(raw)
             run = self._build_diamond_run(td, retry_a=None)
+            feedback = "Please add a null check. " * 16
 
             rc, out, err = run_module(
                 INVALIDATE_MOD,
@@ -286,20 +287,35 @@ class InvalidateNodeTests(unittest.TestCase):
                     *_holder_args(),
                     "--no-cascade",
                     "--retry",
-                    "--feedback", "Please add null check.",
+                    "--feedback", feedback,
                 ],
             )
             self.assertEqual(rc, 0, err)
             payload = json.loads(out)
             self.assertEqual(payload["invalidated"], ["A"])
             self.assertEqual(payload["retried"], ["A"])
-            self.assertEqual(Path(payload["feedback_path"]).read_text(encoding="utf-8"), "Please add null check.")
+            self.assertEqual(Path(payload["feedback_path"]).read_text(encoding="utf-8"), feedback)
 
             state = run_state.load_state(run)
             self.assertEqual(state["nodes"]["A"]["state"], "planned")
             self.assertEqual(state["nodes"]["A"]["attempt"], 2)
             self.assertEqual(state["nodes"]["B"]["state"], "succeeded")
             self.assertEqual(state["nodes"]["C"]["state"], "succeeded")
+
+    def test_feedback_is_not_written_when_only_a_dependent_retries(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            run = self._build_diamond_run(Path(raw))
+            result = INVALIDATE_MOD.invalidate_node(
+                run,
+                node_id="A",
+                reason="operator send-back",
+                holder=HOLDER,
+                feedback="Please add a null check.",
+            )
+
+            self.assertEqual(result["retried"], ["B"])
+            self.assertIsNone(result["feedback_path"])
+            self.assertFalse((run_state.attempt_dir(run, "A", 2) / "feedback.md").exists())
 
     def test_foreign_holder_refused_without_side_effects(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

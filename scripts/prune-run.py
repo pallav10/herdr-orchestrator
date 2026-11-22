@@ -5,7 +5,7 @@ Usage: prune-run.py --run RUN --repo REPO --session S --holder-workspace W --hol
 
 Fail-closed safety gates:
   1. Requires exact holder of the run's active lease.
-  2. Refuses unless every graph node is terminal (succeeded/skipped/failed/interrupted)
+  2. Refuses unless every graph node is terminal (succeeded/skipped/failed/interrupted/invalidated)
      and no active worker is live.
   3. Refuses if `promotion_ref` has unmerged commits unless delivery succeeded or
      `--force-undelivered` is passed.
@@ -20,17 +20,19 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import cli_common
 import graph_model
+import herdr_cli
 import ioutil
 import ledger
 import promotion
 from ioutil import PreconditionError, RunError, UsageError, canonical_path
 
-TERMINAL_NODE_STATES = frozenset({"succeeded", "skipped", "failed", "interrupted"})
+TERMINAL_NODE_STATES = frozenset({"succeeded", "skipped", "failed", "interrupted", "invalidated"})
 PROTECTED_BRANCH_REFS = frozenset({"refs/heads/main", "refs/heads/master"})
 
 
@@ -60,8 +62,27 @@ def _list_git_worktrees(repo_abs: str) -> set[str]:
     return paths
 
 
+def _recorded_dispatch_identities(
+    run_dir: Path, events: list[dict[str, Any]]
+) -> Iterator[dict[str, Any]]:
+    artifacts_root = ledger._artifacts_root(run_dir)
+    if artifacts_root.is_dir():
+        for node_dir in sorted(artifacts_root.iterdir()):
+            if not node_dir.is_dir() or node_dir.is_symlink():
+                continue
+            for attempt_entry in sorted(node_dir.iterdir()):
+                if not attempt_entry.name.isdigit() or not attempt_entry.is_dir() or attempt_entry.is_symlink():
+                    continue
+                ident = ledger.load_dispatch_identity(attempt_entry)
+                if isinstance(ident, dict):
+                    yield ident
+    for ev in events:
+        if ev.get("type") == "dispatched" and isinstance(ev.get("handle"), dict):
+            yield ev["handle"]
+
+
 def _collect_recorded_worktrees_and_branches(
-    run_dir: Path, graph: dict[str, Any], events: list[dict[str, Any]]
+    identities: list[dict[str, Any]]
 ) -> tuple[list[str], set[str]]:
     """Collect unique canonical worktree paths and run-owned branch refs from dispatch identities/events."""
     found: list[str] = []
@@ -78,23 +99,8 @@ def _collect_recorded_worktrees_and_branches(
             ref = raw_branch if raw_branch.startswith("refs/heads/") else f"refs/heads/{raw_branch}"
             branches.add(ref)
 
-    artifacts_root = run_dir / "artifacts"
-    if artifacts_root.is_dir():
-        for node_id in sorted((graph.get("nodes") or {}).keys()):
-            node_dir = artifacts_root / node_id
-            if not node_dir.is_dir():
-                continue
-            for attempt_entry in sorted(node_dir.iterdir(), key=lambda p: p.name):
-                if not attempt_entry.is_dir() or not attempt_entry.name.isdigit():
-                    continue
-                ident = ledger.load_dispatch_identity(attempt_entry)
-                if isinstance(ident, dict):
-                    _add(ident.get("worktree_path"), ident.get("branch"))
-
-    for ev in events:
-        if ev.get("type") == "dispatched" and isinstance(ev.get("handle"), dict):
-            h = ev["handle"]
-            _add(h.get("worktree_path"), h.get("branch"))
+    for ident in identities:
+        _add(ident.get("worktree_path"), ident.get("branch"))
 
     return found, branches
 
@@ -159,7 +165,7 @@ def _promotion_ref_delivered_or_merged(
     return False
 
 
-def _ensure_no_live_workers(run_dir: Path, state: dict[str, Any], events: list[dict[str, Any]]) -> None:
+def _ensure_no_live_workers(state: dict[str, Any], identities: list[dict[str, Any]]) -> None:
     nodes = state.get("nodes") or {}
     for node_id, node in nodes.items():
         if not isinstance(node, dict):
@@ -168,6 +174,29 @@ def _ensure_no_live_workers(run_dir: Path, state: dict[str, Any], events: list[d
             raise PreconditionError(f"cannot prune while node {node_id} is active ({node.get('state')})")
         if node.get("state") == "ready" and graph_model.has_current_dispatch_intent(node):
             raise PreconditionError(f"cannot prune while node {node_id} has pending dispatch_intent")
+
+    worker_names = {name for ident in identities if (name := ioutil.first_str(ident.get("worker_id")))}
+    agent_ids = {agent for ident in identities if (agent := ioutil.first_str(ident.get("agent")))}
+    if not (worker_names or agent_ids or any(
+        isinstance(node, dict) and node.get("executor") == "herdr-agent" for node in nodes.values()
+    )):
+        return
+    try:
+        payload = herdr_cli.herdr("agent", "list")
+    except RunError as exc:
+        if isinstance(exc.__cause__, FileNotFoundError) or getattr(exc, "code", None) == "server_not_running":
+            return
+        raise
+
+    result = payload.get("result")
+    agents = result.get("agents") if isinstance(result, dict) else None
+    if not isinstance(agents, list) or any(not isinstance(agent, dict) for agent in agents):
+        raise RunError("herdr agent list returned unexpected output")
+    for agent in agents:
+        name = ioutil.first_str(agent.get("name"))
+        agent_id = ioutil.first_str(agent, ("agent_id", "id"))
+        if name in worker_names or agent_id in agent_ids:
+            raise PreconditionError(f"cannot prune while live Herdr worker {name or agent_id} exists")
 
 
 def prune_run(
@@ -190,7 +219,13 @@ def prune_run(
 
         run_info = ledger.load_run(run_path)
         run_repo = run_info.get("repo")
-        if not isinstance(run_repo, str) or canonical_path(run_repo) != repo_abs:
+        if not isinstance(run_repo, str) or not Path(run_repo).is_absolute() or "\0" in run_repo:
+            raise PreconditionError("run.json.repo must be an absolute path")
+        try:
+            recorded_repo = canonical_path(run_repo)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise PreconditionError(f"invalid run.json.repo: {run_repo!r}") from exc
+        if recorded_repo != repo_abs:
             raise PreconditionError("prune --repo does not match run repo")
 
         graph = ledger.load_graph(run_path)
@@ -199,7 +234,8 @@ def prune_run(
         if not graph_nodes:
             raise PreconditionError("cannot prune run with empty graph")
 
-        _ensure_no_live_workers(run_path, snap["state"], snap["events"])
+        identities = list(_recorded_dispatch_identities(run_path, snap["events"]))
+        _ensure_no_live_workers(snap["state"], identities)
 
         non_terminal = [
             f"{nid}({(nodes.get(nid) or {}).get('state')})"
@@ -211,13 +247,13 @@ def prune_run(
 
         primary = _primary_checkout(repo_abs)
         git_worktrees = _list_git_worktrees(repo_abs)
-        recorded_worktrees, recorded_branches = _collect_recorded_worktrees_and_branches(run_path, graph, snap["events"])
+        recorded_worktrees, recorded_branches = _collect_recorded_worktrees_and_branches(identities)
 
         # Validate promotion ref gate before any mutation.
         run_id = run_info.get("id") or run_path.name
         expected_promo_ref = f"refs/heads/herdr/{run_id}"
         promo_ref = run_info.get("promotion_ref")
-        refs_to_remove: list[str] = []
+        refs_to_remove: dict[str, str] = {}
         skipped: list[dict[str, str]] = []
 
         if isinstance(promo_ref, str) and promo_ref:
@@ -228,6 +264,16 @@ def prune_run(
                 if promo_sha is None:
                     skipped.append({"target": promo_ref, "reason": "ref absent"})
                 else:
+                    symbolic = ioutil.run_cmd(
+                        ["git", "-C", primary, "symbolic-ref", "-q", promo_ref],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if symbolic.returncode == 0:
+                        raise PreconditionError(f"cannot prune symbolic promotion ref {promo_ref}")
+                    if symbolic.returncode != 1:
+                        detail = (symbolic.stderr or symbolic.stdout).strip()
+                        raise PreconditionError(f"cannot inspect promotion ref {promo_ref}: {detail}")
                     if ledger._promotion_ref_checked_out(repo_abs, promo_ref):
                         raise PreconditionError(f"cannot prune checked-out promotion ref {promo_ref}")
                     if not force_undelivered and not _promotion_ref_delivered_or_merged(
@@ -237,7 +283,7 @@ def prune_run(
                             f"promotion ref {promo_ref} ({promo_sha[:12]}) has unmerged commits; "
                             "deliver first or pass --force-undelivered"
                         )
-                    refs_to_remove.append(promo_ref)
+                    refs_to_remove[promo_ref] = promo_sha
 
         # Validate every recorded worktree before removing anything (all-or-none preflight).
         worktrees_to_remove: list[str] = []
@@ -270,9 +316,9 @@ def prune_run(
                     raise RunError(f"git worktree remove {wt} failed: {detail}")
                 removed_worktrees.append(wt)
 
-            for ref in refs_to_remove:
+            for ref, sha in refs_to_remove.items():
                 proc = ioutil.run_cmd(
-                    ["git", "-C", primary, "update-ref", "-d", ref],
+                    ["git", "-C", primary, "update-ref", "-d", "--no-deref", ref, sha],
                     capture_output=True,
                     text=True,
                 )

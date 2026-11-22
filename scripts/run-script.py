@@ -48,7 +48,10 @@ def _resolve_command(raw_command: Any) -> tuple[list[str], bool]:
     if isinstance(raw_command, list):
         return [str(part) for part in raw_command], False
     if isinstance(raw_command, str):
-        return shlex.split(raw_command), False
+        try:
+            return shlex.split(raw_command), False
+        except ValueError as exc:
+            raise ioutil.PreconditionError(f"invalid script command: {exc}") from exc
     raise ioutil.PreconditionError("script node command must be str or list[str]")
 
 
@@ -75,44 +78,36 @@ def _resolve_cwd(run_dir: Path, plan: dict[str, Any], cli_cwd: str | None) -> st
 
 def _summary_artifacts(
     attempt_path: Path,
-    graph: dict[str, Any],
+    specs: dict[str, str],
     node_id: str,
     receipt: dict[str, Any],
     receipt_path: Path,
     receipt_hash: str,
 ) -> list[dict[str, Any]]:
-    specs = graph_model.output_specs(graph, node_id)
-    artifacts: list[dict[str, Any]] = []
-    for name, out_type in specs.items():
-        if out_type != "summary":
-            raise ioutil.PreconditionError(
-                f"script node {node_id} declares unsupported output type {out_type!r} for {name!r}"
-            )
-        filename = ledger._artifact_file_name(out_type)
-        out_path = attempt_path / filename
-        payload = {
-            "node": node_id,
-            "output": name,
-            "type": out_type,
-            "status": "succeeded",
-            "exit_code": receipt["exit_code"],
-            "duration_sec": receipt["duration_sec"],
-            "command": receipt["command"],
-            "cwd": receipt["cwd"],
-            "script_receipt": {"path": str(receipt_path), "hash": receipt_hash},
-            "stdout": receipt["stdout"],
-            "stderr": receipt["stderr"],
-        }
-        ioutil.atomic_json(out_path, payload)
-        artifacts.append(
-            {
-                "name": name,
-                "type": out_type,
-                "path": str(out_path),
-                "hash": ioutil.sha256_file(out_path),
-            }
-        )
-    return artifacts
+    if not specs:
+        return []
+    # Ledger paths are keyed by type; named summaries share the same receipt.
+    out_path = attempt_path / ledger._artifact_file_name("summary")
+    payload = {
+        "node": node_id,
+        "type": "summary",
+        "status": "succeeded",
+        "exit_code": receipt["exit_code"],
+        "duration_sec": receipt["duration_sec"],
+        "command": receipt["command"],
+        "cwd": receipt["cwd"],
+        "script_receipt": {"path": str(receipt_path), "hash": receipt_hash},
+        "stdout": receipt["stdout"],
+        "stderr": receipt["stderr"],
+    }
+    if len(specs) == 1:
+        payload["output"] = next(iter(specs))
+    ioutil.atomic_json(out_path, payload)
+    digest = ioutil.sha256_file(out_path)
+    return [
+        {"name": name, "type": "summary", "path": str(out_path), "hash": digest}
+        for name in specs
+    ]
 
 
 def main() -> int:
@@ -142,19 +137,33 @@ def main() -> int:
             f"epoch {args.epoch} does not match controller epoch {controller_epoch}"
         )
 
-    result = scheduler.reconcile(run_dir, holder=holder, lock_timeout=args.lock_timeout)
-    state = result["state"]
-    nodes = state.get("nodes") if isinstance(state.get("nodes"), dict) else {}
-    node = nodes.get(node_id)
-    if not isinstance(node, dict):
-        raise ioutil.PreconditionError(f"unknown node {node_id!r}")
-
     graph = ledger.load_graph(run_dir)
     plan = graph.get("nodes", {}).get(node_id)
     if not isinstance(plan, dict):
         raise ioutil.PreconditionError(f"node {node_id!r} is absent from the current graph")
     if plan.get("executor") != "script":
         raise ioutil.PreconditionError(f"node {node_id} executor must be script, got {plan.get('executor')!r}")
+
+    specs = graph_model.output_specs(graph, node_id)
+    for name, out_type in specs.items():
+        if out_type != "summary":
+            raise ioutil.PreconditionError(
+                f"script node {node_id} declares unsupported output type {out_type!r} for {name!r}"
+            )
+    argv, _ = _resolve_command(plan.get("command"))
+    cwd = _resolve_cwd(run_dir, plan, args.cwd)
+    timeout_sec = plan.get("timeout_sec")
+    if timeout_sec is None:
+        timeout_sec = DEFAULT_TIMEOUT_SEC
+    elif isinstance(timeout_sec, bool) or not isinstance(timeout_sec, int) or timeout_sec <= 0:
+        raise ioutil.PreconditionError(f"script node {node_id}.timeout_sec must be a positive integer")
+
+    result = scheduler.reconcile(run_dir, holder=holder, lock_timeout=args.lock_timeout)
+    state = result["state"]
+    nodes = state.get("nodes") if isinstance(state.get("nodes"), dict) else {}
+    node = nodes.get(node_id)
+    if not isinstance(node, dict):
+        raise ioutil.PreconditionError(f"unknown node {node_id!r}")
 
     if node.get("state") != "ready":
         raise ioutil.PreconditionError(node.get("reason") or f"node {node_id} is {node.get('state')}, expected ready")
@@ -166,10 +175,6 @@ def main() -> int:
             f"attempt {args.attempt} does not match current attempt {expected}"
         )
     attempt = expected if args.attempt is None else args.attempt
-
-    argv, _ = _resolve_command(plan.get("command"))
-    cwd = _resolve_cwd(run_dir, plan, args.cwd)
-    timeout_sec = int(plan.get("timeout_sec") or DEFAULT_TIMEOUT_SEC)
 
     if not graph_model.has_current_dispatch_intent(node):
         ledger.append_event(
@@ -246,7 +251,7 @@ def main() -> int:
     receipt_ref = {"path": str(receipt_path), "hash": receipt_hash}
 
     if exit_code == 0 and not timed_out and exec_error is None:
-        artifacts = _summary_artifacts(attempt_path, graph, node_id, receipt_payload, receipt_path, receipt_hash)
+        artifacts = _summary_artifacts(attempt_path, specs, node_id, receipt_payload, receipt_path, receipt_hash)
         appended = ledger.append_event(
             run_dir,
             {
