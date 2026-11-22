@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" width="180" height="180" fill="none" role="img" aria-label="herdr-orchestrator logo — Conductor Shepherd guiding a flock of three sheep">
+  <defs>
+    <linearGradient id="bg" x1="18" y1="12" x2="162" y2="168" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1E1B4B"/>
+      <stop offset="55%" stop-color="#151936"/>
+      <stop offset="100%" stop-color="#0F172A"/>
+    </linearGradient>
+    <linearGradient id="borderGrad" x1="12" y1="12" x2="168" y2="168" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#818CF8"/>
+      <stop offset="50%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#34D399"/>
+    </linearGradient>
+    <linearGradient id="cloak" x1="65" y1="42" x2="115" y2="105" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#6366F1"/>
+      <stop offset="100%" stop-color="#4338CA"/>
+    </linearGradient>
+    <linearGradient id="crook" x1="100" y1="84" x2="148" y2="34" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#F59E0B"/>
+      <stop offset="100%" stop-color="#FDE68A"/>
+    </linearGradient>
+    <radialGradient id="spark" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#38BDF8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Rounded app badge -->
+  <rect x="8" y="8" width="164" height="164" rx="40" fill="url(#bg)" stroke="url(#borderGrad)" stroke-width="4"/>
+
+  <!-- Subtle starry sky accents -->
+  <circle cx="34" cy="36" r="2" fill="#94A3B8" opacity="0.5"/>
+  <circle cx="48" cy="26" r="1.5" fill="#38BDF8" opacity="0.6"/>
+  <circle cx="150" cy="70" r="1.8" fill="#A78BFA" opacity="0.55"/>
+
+  <!-- Baton / crook conductor motion arc -->
+  <path d="M54 44 Q96 18 136 48" stroke="#38BDF8" stroke-width="3.2" stroke-linecap="round" stroke-dasharray="5 6" opacity="0.75"/>
+  <circle cx="140" cy="39" r="14" fill="url(#spark)"/>
+
+  <!-- Conductor Shepherd (centered upper) -->
+  <!-- Cloak & shoulders -->
+  <path d="M64 100 C66 76, 110 76, 112 100 Z" fill="url(#cloak)"/>
+  <!-- Scarf / collar highlight -->
+  <path d="M74 79 Q88 86 102 79" stroke="#38BDF8" stroke-width="3.5" stroke-linecap="round"/>
+  <!-- Face -->
+  <circle cx="88" cy="60" r="14.5" fill="#FDE68A"/>
+  <!-- Hood -->
+  <path d="M70 59 C70 38, 106 38, 106 59 C106 51, 70 51, 70 59 Z" fill="url(#cloak)"/>
+  <!-- Eyes & warm smile -->
+  <circle cx="83.5" cy="61" r="2.2" fill="#1E1B4B"/>
+  <circle cx="92.5" cy="61" r="2.2" fill="#1E1B4B"/>
+  <path d="M84.5 66.5 Q88 69.5 91.5 66.5" stroke="#92400E" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Raised Conductor's Crook (symphony baton) -->
+  <path d="M104 83 L133 41 C139 33, 151 40, 146 49 C142.5 54.5, 134.5 52.5, 135.5 47" stroke="url(#crook)" stroke-width="5.5" stroke-linecap="round" fill="none"/>
+  <circle cx="140" cy="39" r="4.2" fill="#38BDF8"/>
+
+  <!-- Ground shadow arc -->
+  <ellipse cx="90" cy="152" rx="58" ry="8" fill="#020617" opacity="0.45"/>
+
+  <!-- Left Sheep -->
+  <g transform="translate(46, 131)">
+    <circle cx="0" cy="-2" r="17" fill="#FFFFFF"/>
+    <circle cx="-11" cy="2" r="10.5" fill="#FFFFFF"/>
+    <circle cx="11" cy="2" r="10.5" fill="#FFFFFF"/>
+    <circle cx="-6" cy="-12" r="8" fill="#FFFFFF"/>
+    <circle cx="6" cy="-12" r="8" fill="#FFFFFF"/>
+    <ellipse cx="0" cy="2" rx="9" ry="10" fill="#1E293B"/>
+    <ellipse cx="-11" cy="-2" rx="4.8" ry="2.6" transform="rotate(-22 -11 -2)" fill="#1E293B"/>
+    <ellipse cx="11" cy="-2" rx="4.8" ry="2.6" transform="rotate(22 11 -2)" fill="#1E293B"/>
+    <circle cx="-3.2" cy="0" r="1.7" fill="#FFFFFF"/>
+    <circle cx="3.2" cy="0" r="1.7" fill="#FFFFFF"/>
+  </g>
+
+  <!-- Right Sheep -->
+  <g transform="translate(134, 131)">
+    <circle cx="0" cy="-2" r="17" fill="#FFFFFF"/>
+    <circle cx="-11" cy="2" r="10.5" fill="#FFFFFF"/>
+    <circle cx="11" cy="2" r="10.5" fill="#FFFFFF"/>
+    <circle cx="-6" cy="-12" r="8" fill="#FFFFFF"/>
+    <circle cx="6" cy="-12" r="8" fill="#FFFFFF"/>
+    <ellipse cx="0" cy="2" rx="9" ry="10" fill="#1E293B"/>
+    <ellipse cx="-11" cy="-2" rx="4.8" ry="2.6" transform="rotate(-22 -11 -2)" fill="#1E293B"/>
+    <ellipse cx="11" cy="-2" rx="4.8" ry="2.6" transform="rotate(22 11 -2)" fill="#1E293B"/>
+    <circle cx="-3.2" cy="0" r="1.7" fill="#FFFFFF"/>
+    <circle cx="3.2" cy="0" r="1.7" fill="#FFFFFF"/>
+  </g>
+
+  <!-- Center Lead Sheep (foreground) -->
+  <g transform="translate(90, 138)">
+    <circle cx="0" cy="-2" r="19" fill="#FFFFFF"/>
+    <circle cx="-12" cy="3" r="11.5" fill="#FFFFFF"/>
+    <circle cx="12" cy="3" r="11.5" fill="#FFFFFF"/>
+    <circle cx="-7" cy="-13" r="9" fill="#FFFFFF"/>
+    <circle cx="7" cy="-13" r="9" fill="#FFFFFF"/>
+    <ellipse cx="0" cy="2" rx="10" ry="11" fill="#0F172A"/>
+    <ellipse cx="-12" cy="-2" rx="5.2" ry="2.8" transform="rotate(-22 -12 -2)" fill="#0F172A"/>
+    <ellipse cx="12" cy="-2" rx="5.2" ry="2.8" transform="rotate(22 12 -2)" fill="#0F172A"/>
+    <circle cx="-3.5" cy="0" r="1.9" fill="#38BDF8"/>
+    <circle cx="3.5" cy="0" r="1.9" fill="#38BDF8"/>
+    <!-- Cute top wool tuft -->
+    <circle cx="0" cy="-8" r="4" fill="#FFFFFF"/>
+  </g>
+</svg>
