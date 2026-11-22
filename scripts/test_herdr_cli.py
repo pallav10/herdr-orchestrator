@@ -53,6 +53,18 @@ class HerdrCliTest(unittest.TestCase):
             herdr_cli.herdr("pane", "list")
         self.assertEqual(str(ctx.exception), "herdr not on PATH")
 
+    def test_timeout_expired_becomes_runerror_with_timeout_code(self):
+        self.stub(side_effect=subprocess.TimeoutExpired(cmd=["herdr", "agent", "list"], timeout=10, output="out", stderr="err"))
+        with self.assertRaises(run_state.RunError) as ctx:
+            herdr_cli.herdr("agent", "list")
+        exc = ctx.exception
+        self.assertEqual(exc.code, "timeout")
+        self.assertEqual(exc.args_tuple, ("agent", "list"))
+        self.assertIsNone(exc.returncode)
+        self.assertEqual(exc.stdout, "out")
+        self.assertEqual(exc.stderr, "err")
+        self.assertIn("timed out", str(exc))
+
     def test_empty_stdout_is_empty_dict(self):
         self.stub(result=completed(stdout="   \n"))
         self.assertEqual(herdr_cli.herdr("pane", "kill"), {})
@@ -105,6 +117,14 @@ class HerdrCliTest(unittest.TestCase):
                 with self.subTest(resource=resource, verb=verb):
                     herdr_cli.herdr(resource, verb, "w")
                     self.assertEqual(run.call_args.kwargs["timeout"], 10)
+        for extra in (
+            ("pane", "process-info", "w:p0"),
+            ("agent", "read", "w:p0"),
+            ("api", "schema", "--json"),
+        ):
+            with self.subTest(args=extra):
+                herdr_cli.herdr(*extra)
+                self.assertEqual(run.call_args.kwargs["timeout"], 10)
 
     def test_non_read_calls_keep_full_timeout(self):
         run = self.stub(result=completed(stdout="{}"))

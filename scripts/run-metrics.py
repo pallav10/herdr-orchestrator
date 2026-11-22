@@ -21,6 +21,7 @@ import graph_model
 import ioutil
 import ledger
 
+CLI_EXTRA_CODES = {RuntimeError: 1}
 TERMINAL_EVENTS = frozenset({"succeeded", "failed", "interrupted", "skipped", "invalidated"})
 ACTIVE_START_EVENTS = frozenset({"dispatched", "attempt_started"})
 SESSION_KEY_CANDIDATES = ("session_path", "agent_session", "session_jsonl")
@@ -72,7 +73,14 @@ def _find_attempt_session_path(run_dir: Path, node_id: str, attempt: int) -> Pat
             continue
         candidate = _extract_session_path(data)
         if candidate:
-            p = Path(candidate).expanduser()
+            p = Path(candidate)
+            if not p.is_absolute():
+                try:
+                    p = (adir / p).resolve()
+                except (OSError, RuntimeError, ValueError):
+                    continue
+                if not p.is_relative_to(adir):
+                    continue
             if p.is_file():
                 return p
     return None
@@ -166,7 +174,7 @@ def compute_metrics(run_dir: str | Path) -> dict[str, Any]:
     events = snap["events"]
     state_nodes = snap["state"].get("nodes") or {}
 
-    all_ts = [ts for ev in events if (ts := _parse_ts(ev.get("ts"))) is not None]
+    all_ts = [ts for ev in events if (ts := _parse_ts(ev.get("t") or ev.get("ts"))) is not None]
     total_wall_sec = _round_sec(max(all_ts) - min(all_ts)) if len(all_ts) >= 2 else (0.0 if len(all_ts) == 1 else None)
 
     node_events: dict[str, list[dict[str, Any]]] = {nid: [] for nid in state_nodes}
@@ -195,12 +203,12 @@ def compute_metrics(run_dir: str | Path) -> dict[str, Any]:
         has_wait = False
         failures = 0
         blocks = 0
-        node_ts = [ts for ev in evs if (ts := _parse_ts(ev.get("ts"))) is not None]
+        node_ts = [ts for ev in evs if (ts := _parse_ts(ev.get("t") or ev.get("ts"))) is not None]
         node_wall = _round_sec(max(node_ts) - min(node_ts)) if len(node_ts) >= 2 else (0.0 if len(node_ts) == 1 else None)
 
         for att in sorted(by_attempt):
             aevs = by_attempt[att]
-            ats = [ts for ev in aevs if (ts := _parse_ts(ev.get("ts"))) is not None]
+            ats = [ts for ev in aevs if (ts := _parse_ts(ev.get("t") or ev.get("ts"))) is not None]
             att_wall = _round_sec(max(ats) - min(ats)) if len(ats) >= 2 else (0.0 if len(ats) == 1 else None)
 
             active_sec = 0.0
@@ -214,7 +222,7 @@ def compute_metrics(run_dir: str | Path) -> dict[str, Any]:
 
             for ev in aevs:
                 typ = ev.get("type")
-                ts = _parse_ts(ev.get("ts"))
+                ts = _parse_ts(ev.get("t") or ev.get("ts"))
                 if typ == "blocked":
                     blocks += 1
                     att_blocks += 1
@@ -310,4 +318,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    cli_common.run(main)
+    cli_common.run(main, extra_codes=CLI_EXTRA_CODES)

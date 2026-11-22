@@ -138,27 +138,22 @@ def main() -> int:
     with ledger.with_lock(run, lock_timeout=args.lock_timeout):
         recovered = transferred_successor(run, predecessor, args.nonce, workspace, pane)
         if recovered is None:
-            predecessor_holder(ledger.replay(run)["controller"], predecessor, meta)
-
-
-    if recovered is None:
-        template_dir = SCRIPTS.parent / "references" / "templates"
-        rolled = session_docs.open_session(
-            root, job=job, template_dir=template_dir, parent=predecessor, run=str(run),
-            defer_run_binding=True, lock_timeout=args.lock_timeout,
-        )
-        if rolled.get("run") != str(run):
-            raise RuntimeError("successor session run mismatch")
-
-        session_id = rolled.get("id")
-        if not isinstance(session_id, str) or not session_id.strip():
-            raise RuntimeError("successor session id missing")
-        successor = session_docs.load_session(predecessor.parent / session_id)
-        successor_session = ioutil.canonical_path(successor)
-        parent = rolled["parent"]
-
-        with ledger.with_lock(run, lock_timeout=args.lock_timeout):
             holder = predecessor_holder(ledger.replay(run)["controller"], predecessor, meta)
+            template_dir = SCRIPTS.parent / "references" / "templates"
+            rolled = session_docs.open_session(
+                root, job=job, template_dir=template_dir, parent=predecessor, run=str(run),
+                defer_run_binding=True, lock_timeout=args.lock_timeout,
+            )
+            if rolled.get("run") != str(run):
+                raise RuntimeError("successor session run mismatch")
+
+            session_id = rolled.get("id")
+            if not isinstance(session_id, str) or not session_id.strip():
+                raise RuntimeError("successor session id missing")
+            successor = session_docs.load_session(predecessor.parent / session_id)
+            successor_session = ioutil.canonical_path(successor)
+            parent = rolled["parent"]
+
             ledger.append_event_locked(
                 run,
                 {
@@ -170,20 +165,20 @@ def main() -> int:
                 },
                 holder=holder,
             )
-    else:
-        successor_session = recovered["session"]
-        session_id = recovered["id"]
-        parent = recovered["parent"]
+        else:
+            successor_session = recovered["session"]
+            session_id = recovered["id"]
+            parent = recovered["parent"]
 
-    stamp_workspace_tokens(
-        workspace,
-        source="successor",
-        tokens=(
-            f"handoff-ack={args.nonce}",
-            f"session={session_id}",
-        ),
-        invoke=herdr,
-    )
+        stamp_workspace_tokens(
+            workspace,
+            source="successor",
+            tokens=(
+                f"handoff-ack={args.nonce}",
+                f"session={session_id}",
+            ),
+            invoke=herdr,
+        )
 
     print(json.dumps({
         "acked": True,

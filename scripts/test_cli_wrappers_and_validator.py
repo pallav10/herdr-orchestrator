@@ -303,6 +303,28 @@ class PromoteRunCliTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 2)
 
 
+class DispatchAgentCliTest(unittest.TestCase):
+    def test_non_herdr_executor_cannot_mutate_ledger(self) -> None:
+        holder = dict(testkit.HOLDER)
+        graph = {"schema_version": 1, "nodes": {"A": {"id": "A", "executor": "task"}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            run = testkit.new_run(Path(tmp), graph, holder=holder)
+            snap = ledger.replay(run)
+            self.assertEqual(snap["state"]["nodes"]["A"]["state"], "ready")
+            events_path = run / "events.jsonl"
+            before = events_path.read_bytes()
+            proc = _run_cli(
+                "dispatch-agent.py",
+                [
+                    "--run", str(run), "--node", "A", "--prompt", "work",
+                    "--epoch", str(snap["controller"]["epoch"]), *_holder_args(holder),
+                ],
+            )
+            self.assertEqual(proc.returncode, 3, proc.stderr)
+            self.assertIn("executor must be herdr-agent", proc.stderr)
+            self.assertEqual(events_path.read_bytes(), before)
+
+
 class ValidateGraphCliTest(unittest.TestCase):
     def test_valid_dag_waves_and_max_parallelism(self) -> None:
         graph = {
@@ -366,8 +388,8 @@ class ValidateGraphCliTest(unittest.TestCase):
                 {"nodes": ["w2", "w3"], "patterns": ["src/shared/api.py", "src/shared/api.py"]},
             ],
         )
-        self.assertEqual(report["waves"], [["w1", "w2"], ["w3"]])
-        self.assertEqual(report["max_parallelism"], 2)
+        self.assertEqual(report["waves"], [])
+        self.assertEqual(report["max_parallelism"], 0)
 
     def test_schema_error_returns_exit_3(self) -> None:
         graph = {
@@ -379,6 +401,49 @@ class ValidateGraphCliTest(unittest.TestCase):
         report = json.loads(proc.stdout)
         self.assertFalse(report["valid"])
         self.assertTrue(any("schema_version" in err for err in report["errors"]))
+
+    def test_malformed_dependency_output_and_retry_fields(self) -> None:
+        cases = (
+            ({"depends_on": "b"}, "depends_on"),
+            ({"depends_on": [{}]}, "depends_on"),
+            ({"depends_on": [["b"]]}, "depends_on"),
+            ({"depends_on": ["unknown"]}, "unknown"),
+            ({"outputs": {}}, "outputs"),
+            ({"outputs": ["summary"]}, "outputs"),
+            ({"retry": {"max_attempts": "invalid"}}, "retry.max_attempts"),
+            ({"retry": {"max_attempts": "2"}}, "retry.max_attempts"),
+            ({"retry": {"max_attempts": True}}, "retry.max_attempts"),
+            ({"retry": {"max_attempts": 1.5}}, "retry.max_attempts"),
+            ({"retry": {"max_attempts": []}}, "retry.max_attempts"),
+        )
+        for fields, error in cases:
+            with self.subTest(fields=fields):
+                graph = {
+                    "schema_version": 1,
+                    "nodes": {"a": {"id": "a", "executor": "task", **fields}},
+                }
+                proc = _run_cli("validate-graph.py", ["--graph-file", "-"], stdin_text=json.dumps(graph))
+                self.assertEqual(proc.returncode, 3, proc.stderr)
+                report = json.loads(proc.stdout)
+                self.assertFalse(report["valid"])
+                self.assertTrue(any(error in item for item in report["errors"]), report)
+                self.assertEqual(report["waves"], [])
+                self.assertEqual(report["max_parallelism"], 0)
+
+    def test_chorded_cycles_in_same_component(self) -> None:
+        graph = {
+            "schema_version": 1,
+            "nodes": {
+                "a": {"id": "a", "executor": "task", "depends_on": ["b", "c"]},
+                "b": {"id": "b", "executor": "task", "depends_on": ["c"]},
+                "c": {"id": "c", "executor": "task", "depends_on": ["a", "b"]},
+            },
+        }
+        proc = _run_cli("validate-graph.py", ["--graph-file", "-"], stdin_text=json.dumps(graph))
+        self.assertEqual(proc.returncode, 3, proc.stderr)
+        report = json.loads(proc.stdout)
+        self.assertEqual(report["cycles"], [["a", "b", "c"], ["a", "c"], ["b", "c"]])
+        self.assertEqual(report["waves"], [])
 
     def test_deep_chain_iterative_tarjan_no_recursion_error(self) -> None:
         count = 1500

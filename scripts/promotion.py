@@ -19,6 +19,7 @@ def delivery_branch_ref(branch) -> str:
     ref = "refs/heads/" + name
     if (
         name.startswith("refs/")
+        or name == "HEAD"
         or name != name.strip("/")
         or name.startswith("-")
         or "//" in name
@@ -57,7 +58,21 @@ def _graph_work_complete(run_dir: Path, snap: dict[str, Any], graph: dict[str, A
     return all((nodes.get(node_id) or {}).get("state") in {"succeeded", "skipped"} for node_id in ids)
 
 
+def _refuse_symbolic_ref(repo_abs: str, ref: str) -> None:
+    proc = run_cmd(["git", "-C", repo_abs, "symbolic-ref", "-q", ref], capture_output=True)
+    if proc.returncode == 0:
+        raise PreconditionError(f"promotion ref {ref} is a symbolic ref")
+
+
+def _require_ancestor(repo_abs: str, expected_old: str, new_sha: str) -> None:
+    proc = run_cmd(["git", "-C", repo_abs, "merge-base", "--is-ancestor", expected_old, new_sha], capture_output=True)
+    if proc.returncode != 0:
+        raise PreconditionError(f"promotion commit {new_sha} is not descended from {expected_old}")
+
+
 def _deliver_branch_locked(run_dir: Path, repo_abs: str, snap: dict[str, Any], *, holder=None, branch: str | None = None, graph: dict[str, Any] | None = None) -> dict[str, Any]:
+    if snap.get("truncated_tail"):
+        raise PreconditionError("events.jsonl has truncated tail; recover before delivery")
     controller = snap["controller"]
     require_active_holder(controller, holder, "deliver_branch")
     run = load_run(run_dir)
@@ -71,13 +86,15 @@ def _deliver_branch_locked(run_dir: Path, repo_abs: str, snap: dict[str, Any], *
     ref = delivery_branch_ref(branch) if branch is not None else default_delivery_branch(run.get("job") or run["id"])
     if ref == run.get("promotion_ref"):
         raise PreconditionError(f"delivery branch {ref} is the run-owned promotion ref; choose another name")
+    _refuse_symbolic_ref(repo_abs, ref)
     current = _git_ref(repo_abs, ref)
     if current == sha:
         return {"delivery_branch": ref, "sha": sha, "created": False}
     if current is not None:
         raise PreconditionError(f"delivery branch {ref} already exists at {current}; deliver with branch=<another name>")
-    proc = run_cmd(["git", "-C", repo_abs, "update-ref", ref, sha, ""], capture_output=True, text=True)
+    proc = run_cmd(["git", "-C", repo_abs, "update-ref", "--no-deref", ref, sha, ""], capture_output=True, text=True)
     if proc.returncode != 0:
+        _refuse_symbolic_ref(repo_abs, ref)
         landed = _git_ref(repo_abs, ref)
         if landed == sha:
             return {"delivery_branch": ref, "sha": sha, "created": False}
@@ -129,6 +146,15 @@ def promote(run_dir: str | Path, *, node: str, attempt: int, new_sha: str, repo:
     repo_abs = canonical_path(repo)
     with with_lock(run_dir, lock_timeout=lock_timeout, node=node):
         snap = replay(run_dir)
+        if snap.get("truncated_tail"):
+            raise PreconditionError("events.jsonl has truncated tail; recover before promotion")
+        pending, _ = _pending_promotion(snap["events"])
+        if pending is not None:
+            raise PreconditionError("unfinished promotion intent; recover before starting another promotion")
+        state = snap["state"]
+        node_state = state["nodes"].get(node)
+        if not node_state or node_state.get("state") != "running" or int(node_state.get("attempt", 0)) != int(attempt):
+            raise PreconditionError(f"promotion requires node {node} running at attempt {attempt}")
         graph = load_graph(run_dir)
         run = load_run(run_dir)
         ref = run["promotion_ref"]
@@ -139,12 +165,15 @@ def promote(run_dir: str | Path, *, node: str, attempt: int, new_sha: str, repo:
         _check_holder(snap["controller"], intent, holder)
         if not isinstance(run.get("repo"), str) or canonical_path(run["repo"]) != repo_abs:
             raise PreconditionError("promotion repo does not match run repo")
+        _refuse_symbolic_ref(repo_abs, ref)
         _refuse_checked_out_promotion_ref(repo_abs, ref)
-        artifacts = _promotion_artifacts(run_dir, graph, node, int(attempt), snap["state"]["nodes"][node], new_sha)
+        artifacts = _promotion_artifacts(run_dir, graph, node, int(attempt), node_state, new_sha, state=state)
+        _require_ancestor(repo_abs, expected_old, new_sha)
 
         append_event_locked(run_dir, intent, holder=holder)
-        proc = run_cmd(["git", "-C", repo_abs, "update-ref", ref, new_sha, expected_old], capture_output=True, text=True)
+        proc = run_cmd(["git", "-C", repo_abs, "update-ref", "--no-deref", ref, new_sha, expected_old], capture_output=True, text=True)
         if proc.returncode != 0:
+            _refuse_symbolic_ref(repo_abs, ref)
             current = run_cmd(["git", "-C", repo_abs, "rev-parse", ref], capture_output=True, text=True).stdout.strip()
             if current != expected_old:
                 return append_event_locked(run_dir, {"type": "blocked", "node": node, "attempt": int(attempt), "reason": "promotion ref changed", "ref": ref}, holder=holder)
@@ -164,7 +193,7 @@ def _pending_promotion(events: list[dict[str, Any]]) -> tuple[dict[str, Any] | N
         elif pending and event.get("node") == pending.get("node") and event.get("attempt") == pending.get("attempt"):
             if event.get("type") == "promoted":
                 promoted = event
-            elif event.get("type") in {"blocked", "succeeded"}:
+            elif event.get("type") in {"blocked", "succeeded", "failed", "interrupted"}:
                 pending = None
                 promoted = None
     return pending, promoted
@@ -179,6 +208,8 @@ def recover_promotion(run_dir, repo, *, holder=None, lock_timeout=120) -> None:
 
 def _ensure_delivery_locked(run_dir: Path, repo_abs: str, snap: dict[str, Any], graph: dict[str, Any], *, holder=None) -> None:
     """Publish the final branch for a finished run that never got one; no-op otherwise."""
+    if snap.get("truncated_tail"):
+        raise PreconditionError("events.jsonl has truncated tail; recover before delivery")
     if not _graph_work_complete(run_dir, snap, graph) or not _delivered_sha(snap):
         return
     controller = snap["controller"]
@@ -192,18 +223,26 @@ def _ensure_delivery_locked(run_dir: Path, repo_abs: str, snap: dict[str, Any], 
 def _recover_promotion_locked(run_dir: Path, repo, *, holder=None) -> None:
     repo_abs = canonical_path(repo)
     snap = replay(run_dir)
+    if snap.get("truncated_tail"):
+        raise PreconditionError("events.jsonl has truncated tail; repair the ledger before recovering promotion")
     graph = load_graph(run_dir)
     pending, already_promoted = _pending_promotion(snap["events"])
     if not pending:
         # a crash between the succeeded append and publication leaves no pending intent
         _ensure_delivery_locked(run_dir, repo_abs, snap, graph, holder=holder)
         return
+    state = snap["state"]
+    node_state = state["nodes"].get(pending["node"])
+    if not node_state or node_state.get("state") != "running" or int(node_state.get("attempt", 0)) != int(pending["attempt"]):
+        raise PreconditionError(f"pending promotion requires node {pending['node']} running at attempt {pending['attempt']}")
     promoted = {"type": "promoted", "ref": pending["ref"], "expected_old": pending["expected_old"], "new": pending["new"], "node": pending["node"], "attempt": pending["attempt"]}
     _check_holder(snap["controller"], promoted, holder)
     run = load_run(run_dir)
     if not isinstance(run.get("repo"), str) or canonical_path(run["repo"]) != repo_abs:
         raise PreconditionError("promotion repo does not match run repo")
+    _refuse_symbolic_ref(repo_abs, pending["ref"])
     _refuse_checked_out_promotion_ref(repo_abs, pending["ref"])
+    _require_ancestor(repo_abs, pending["expected_old"], pending["new"])
     ref = pending["ref"]
     current = run_cmd(["git", "-C", repo_abs, "rev-parse", ref], capture_output=True, text=True).stdout.strip()
     if already_promoted and current != pending["new"]:
@@ -214,8 +253,9 @@ def _recover_promotion_locked(run_dir: Path, repo, *, holder=None) -> None:
         graph,
         pending["node"],
         int(pending["attempt"]),
-        snap["state"]["nodes"][pending["node"]],
+        node_state,
         pending["new"],
+        state=state,
     )
     if already_promoted:
         atomic_json(attempt_dir(run_dir, pending["node"], int(pending["attempt"])) / "promoted.json", {"ref": promoted["ref"], "old": promoted["expected_old"], "new": promoted["new"]})
@@ -226,7 +266,7 @@ def _recover_promotion_locked(run_dir: Path, repo, *, holder=None) -> None:
         _finalize_promotion_locked(run_dir, promoted, artifacts, holder=holder)
         _autodeliver_locked(run_dir, repo_abs, graph, holder=holder)
     elif current == pending["expected_old"]:
-        _run_git(repo_abs, "update-ref", ref, pending["new"], pending["expected_old"])
+        _run_git(repo_abs, "update-ref", "--no-deref", ref, pending["new"], pending["expected_old"])
         _finalize_promotion_locked(run_dir, promoted, artifacts, holder=holder)
         _autodeliver_locked(run_dir, repo_abs, graph, holder=holder)
     else:

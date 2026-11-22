@@ -25,13 +25,18 @@ def overwrite_forced_artifact(run: Path, node: str, attempt: int, path: Path, pa
             raise PreconditionError(f"unknown node {node!r}")
         if _attempt_int(attempt, "attempt") < 1:
             raise PreconditionError("artifact_forced requires attempt >= 1")
-        # Preserve append's immutable-snapshot refusal before replacing any bytes.
-        ledger._repair_dispatch_snapshots_locked(run, snap)
         existed = path.is_file()
+        if existed:
+            if path.read_bytes() == payload.encode("utf-8"):
+                return
+            # Preserve append's immutable-snapshot bytes.
+            ledger._repair_dispatch_snapshots_locked(run, snap)
         ioutil.atomic_text(path, payload)
         if existed:
             ledger.append_event_locked(
-                run, {"type": "artifact_forced", "node": node, "attempt": int(attempt), "forced": [path.name]},
+                run,
+                {"type": "artifact_forced", "node": node, "attempt": int(attempt),
+                 "forced": [path.name], "hashes": {path.name: ioutil.sha256_file(path)}},
                 holder=holder,
             )
 

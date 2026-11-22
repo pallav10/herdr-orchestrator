@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
 import sys
 import tempfile
 import unittest
@@ -30,7 +31,7 @@ def _init_gitignored_repo(root: Path) -> tuple[Path, Path]:
     return repo, docs
 
 
-def _run_ho(argv: list[str], *, env: dict[str, str] | None = None, cwd: Path | None = None) -> tuple[int, str, str]:
+def _run_ho(argv: list[str], *, env: dict[str, str | None] | None = None, cwd: Path | None = None) -> tuple[int, str, str]:
     out = io.StringIO()
     err = io.StringIO()
     old_cwd = Path.cwd()
@@ -93,6 +94,11 @@ class HoCliTests(unittest.TestCase):
             self.assertEqual(ctx["holder"], {"workspace": "ws-auto", "pane": "pane-auto", "session": str(session_path)})
             self.assertEqual(ctx["epoch"], 1)
 
+            with mock.patch.object(ho, "_live_agents_by_name", return_value={}):
+                code, out, err = _run_ho(["status", "--docs", "docs"], env=env, cwd=repo)
+            self.assertEqual(code, 0, err)
+            self.assertEqual(json.loads(out)["run"], str(run_path))
+
             # Fails closed when env has unknown pane and no explicit --run/--session
             code, _, err = _run_ho(
                 ["status"],
@@ -101,6 +107,105 @@ class HoCliTests(unittest.TestCase):
             )
             self.assertEqual(code, 3)
             self.assertIn("ho.py init", err)
+
+            missing_env = dict.fromkeys(env)
+            run_args = ["--run", str(run_path)]
+            for command in (["dispatch", "A", "--prompt", "work"], ["next", "--reconcile"]):
+                for session_args in ([], ["--session", str(session_path)]):
+                    with self.subTest(command=command, session_args=session_args):
+                        code, _, err = _run_ho([*command, *run_args, *session_args], env=missing_env, cwd=repo)
+                        self.assertEqual(code, 3, err)
+                        self.assertIn("--holder-workspace", err)
+                        self.assertIn("--holder-pane", err)
+
+            code, _, err = _run_ho(
+                ["next", "--reconcile", *run_args, "--docs", "missing-docs"], env=env, cwd=repo,
+            )
+            self.assertEqual(code, 3, err)
+            self.assertIn("--session", err)
+
+            with mock.patch.object(ho, "_live_agents_by_name", return_value={}):
+                code, out, err = _run_ho(["status", *run_args], env=missing_env, cwd=repo)
+            self.assertEqual(code, 0, err)
+            self.assertEqual(json.loads(out)["lease"], "active")
+
+            with mock.patch.object(ho, "_live_agents_by_name", return_value={}):
+                code, _, err = _run_ho(["retire"], env=env, cwd=repo)
+                self.assertEqual(code, 2, err)
+                self.assertIn("--all", err)
+                code, out, err = _run_ho(["retire", "--all"], env=env, cwd=repo)
+            self.assertEqual(code, 0, err)
+            self.assertEqual(json.loads(out)["retired"], [])
+
+    def test_next_dispatches_script_alongside_running_worker_and_explains_other_executors(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo, docs = _init_gitignored_repo(Path(td))
+            env = {"HERDR_WORKSPACE_ID": "ws-executors", "HERDR_PANE_ID": "pane-executors"}
+            code, out, err = _run_ho(["init", "--dir", str(docs), "--job", "executors"], env=env, cwd=repo)
+            self.assertEqual(code, 0, err)
+            run_path = Path(json.loads(out)["run"])
+            graph_file = Path(td) / "graph.json"
+            graph_file.write_text(json.dumps({"nodes": [
+                {"id": "Check", "executor": "script", "command": [sys.executable, "-c", "print('checked')"]},
+                {"id": "Worker", "executor": "herdr-agent"},
+                {"id": "Pane", "executor": "pane", "handle": {"name": "user-pane"}},
+                {"id": "Task", "executor": "task"},
+                {"id": "Workflow", "executor": "workflow"},
+            ]}), encoding="utf-8")
+            code, out, err = _run_ho(["accept", "--graph", str(graph_file)], env=env, cwd=repo)
+            self.assertEqual(code, 0, err)
+
+            snap = ledger.replay(run_path)
+            snap["state"]["nodes"]["Worker"].update(state="running", attempt=1, handle={"worker_id": "worker"})
+            finished = ho._compute_next(run_path, snap, live={"worker": {"agent_status": "idle"}})
+            self.assertEqual(finished["phase"], "finish")
+            nxt = ho._compute_next(run_path, snap, live={})
+            self.assertEqual(nxt["phase"], "dispatch")
+            self.assertEqual(len(nxt["commands"]), 1)
+            argv = shlex.split(nxt["commands"][0])[2:]
+            self.assertEqual(argv, ["dispatch", "Check", "--run", str(run_path)])
+            for node, executor in (("Pane", "pane"), ("Task", "task"), ("Workflow", "workflow")):
+                with self.subTest(executor=executor):
+                    self.assertIn(f"{node} ({executor})", nxt["summary"])
+                    code, _, err = _run_ho(["dispatch", node], env=env, cwd=repo)
+                    self.assertEqual(code, 3, err)
+                    self.assertIn(executor, err)
+
+            code, _, err = _run_ho(["dispatch", "Worker"], env=env, cwd=repo)
+            self.assertEqual(code, 2, err)
+            self.assertIn("--prompt-file", err)
+            code, out, err = _run_ho(argv, env=env, cwd=repo)
+            self.assertEqual(code, 0, err)
+            self.assertEqual(json.loads(out)["state"], "succeeded")
+
+    def test_next_reports_invalidated_node_needing_attention(self) -> None:
+        graph = {"nodes": {"Stale": {"executor": "script"}}}
+        snap = {"state": {"dispatch": True, "nodes": {"Stale": {"state": "invalidated"}}}}
+        with mock.patch.object(ledger, "load_graph", return_value=graph):
+            nxt = ho._compute_next(Path("/run"), snap)
+        self.assertEqual(nxt["phase"], "blocked")
+        self.assertIn("Stale", nxt["summary"])
+
+    def test_ready_nodes_follow_scheduler_rules(self) -> None:
+        graph = {"nodes": {
+            "Eligible": {},
+            "AlreadyReady": {},
+            "Conditional": {"condition": "false"},
+            "Skipped": {},
+            "MissingInput": {
+                "depends_on": ["Skipped"],
+                "inputs": [{"from": "Skipped", "output": "summary", "alias": "summary"}],
+            },
+        }}
+        state = {"dispatch": True, "nodes": {
+            "Eligible": {"state": "planned"},
+            "AlreadyReady": {"state": "ready"},
+            "Conditional": {"state": "planned"},
+            "Skipped": {"state": "skipped"},
+            "MissingInput": {"state": "ready"},
+        }}
+        self.assertEqual(ho._ready_nodes_from_state(state, graph), ["AlreadyReady", "Eligible"])
+        self.assertEqual(ho._ready_nodes_from_state({**state, "dispatch": False}, graph), [])
 
     def test_forgiving_graph_normalization_and_validation_error_example(self) -> None:
         # List form + omitted schema_version
@@ -236,7 +341,10 @@ class HoCliTests(unittest.TestCase):
             self.assertIn("dispatch Int", nxt["commands"][0])
 
             # Dispatch integrator -> Phase 3: monitor (while worker is running)
-            scheduler.reconcile(run_path, holder=holder)
+            with mock.patch.object(ho, "_live_agents_by_name", return_value={}):
+                code, _, err = _run_ho(["next", "--reconcile"], env=env, cwd=repo)
+            self.assertEqual(code, 0, err)
+            self.assertEqual(ledger.replay(run_path)["state"]["nodes"]["Int"]["state"], "ready")
             worker_id = "fo-" + "aa" * 12
             wt_path = Path(td) / "int-wt"
             branch = f"{run_path.name}/Int/1"

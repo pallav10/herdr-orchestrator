@@ -55,16 +55,18 @@ def parse_vars(raw_vars: list[str]) -> dict[str, str]:
 
 def _expand_str(text: str, variables: dict[str, str], unresolved: set[str]) -> str:
     def _replace(match: re.Match[str]) -> str:
-        key = match.group(1)
-        if key in variables:
-            return variables[key]
-        unresolved.add(key)
-        return match.group(0)
+        token = match.group(0)
+        valid = PLACEHOLDER_RE.fullmatch(token)
+        if valid is not None:
+            key = valid.group(1)
+            if key in variables:
+                return variables[key]
+            unresolved.add(key)
+        else:
+            unresolved.add(token)
+        return token
 
-    expanded = PLACEHOLDER_RE.sub(_replace, text)
-    for leftover in ANY_PLACEHOLDER_RE.findall(expanded):
-        unresolved.add(leftover)
-    return expanded
+    return ANY_PLACEHOLDER_RE.sub(_replace, text)
 
 
 def _expand_value(value: Any, variables: dict[str, str], unresolved: set[str]) -> Any:

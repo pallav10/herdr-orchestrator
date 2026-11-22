@@ -70,6 +70,11 @@ New managed workers use `identity_kind: managed-name` and immutable `worker_id` 
 | `scripts/session_docs.py`, `scripts/init-docs.py` | Session binding, canonical paths, and template rendering. |
 | `scripts/dispatch-agent.py`, `scripts/finish-agent.py` | Controller-facing dispatch and completion entry points. |
 | `scripts/reconcile.py`, `scripts/rotate.py`, `scripts/ack-handoff.py` | State repair and tokenized controller handoff. |
+| `scripts/ho.py`, `scripts/doctor.py`, `scripts/inspect-run.py` | High-level controller facade, read-only environment/protocol preflight, and run status inspector. |
+| `scripts/validate-graph.py`, `scripts/render-graph.py`, `scripts/accept-graph.py` | Graph linting, built-in template rendering, and graph acceptance CLI. |
+| `scripts/dispatch-wave.py`, `scripts/run-script.py`, `scripts/promote-run.py` | Wave scheduler dispatch, deterministic script node runner, and promotion/delivery CLI. |
+| `scripts/invalidate-node.py`, `scripts/verdict.py`, `scripts/run-metrics.py`, `scripts/prune-run.py` | Node invalidation, verdict recording, run metrics, and worktree/ref cleanup. |
+| `scripts/context_usage.py`, `scripts/self-improve.py` | Measured OMP context snapshot validation and detached skill self-improvement launcher. |
 
 Reference index (D14): [identity-reattach](references/identity-reattach.md), [rotation](references/rotation.md), [retire-promote](references/retire-promote.md), [run-state-api](references/run-state-api.md). Practical examples: [controller-playbook](references/controller-playbook.md). CLI consumers: [docs/herdr-cheatsheet.md](docs/herdr-cheatsheet.md).
 
@@ -79,7 +84,7 @@ Session metadata is the sole run locator. Required HANDOFF/NEXT bootstrap resour
 
 Use `python3` on a POSIX platform: locking requires `fcntl`. Python modules use the standard library only. `package.json` is OMP plugin metadata and registers a TypeScript context extension that uses Node built-ins inside OMP; it adds no npm dependencies or build step. `.omp-plugin/marketplace.json` exposes the root skill with `source: "./"` and `skills: ["./"]`. Git is required; live control needs `herdr` on PATH. Model-role lookup invokes `omp config get modelRoles --json`. Keep the context exporter separate from Herdr's stock lifecycle integration and do not load duplicate snapshot writers.
 
-The documented compatibility target is Herdr 0.8.2/protocol 20, not a runtime version probe. Trust installed CLI help; stop on protocol mismatch. Preserve `HERDR_SESSION`/`HERDR_SOCKET_PATH` and controller pane identity variables when launching child processes. Never stop the Herdr server from an active pane or close user-owned surfaces. Keep runtime ledgers and local `.idea/`, `.desloppify/`, and bytecode artifacts out of commits.
+The documented compatibility target is Herdr 0.9.3/protocol 22; `doctor.py` performs an explicit read-only preflight probe (`herdr api schema --json`). Trust installed CLI help; stop on protocol mismatch. Preserve `HERDR_SESSION`/`HERDR_SOCKET_PATH` and controller pane identity variables when launching child processes. Never stop the Herdr server from an active pane or close user-owned surfaces. Keep runtime ledgers and local `.idea/`, `.desloppify/`, and bytecode artifacts out of commits.
 
 ## Testing & QA
 

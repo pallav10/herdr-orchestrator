@@ -63,6 +63,7 @@ class TestCheckOwnership(unittest.TestCase):
             git(repo, "commit", "-m", "owned")
             run = root / "run"
             self.plant_attempt(run, "N", "1", worktree=repo, base=base, globs=["src/a/**"])
+            self.plant_attempt(run, "N", "٢", worktree=repo, base=base, globs=["docs/**"])
 
             code, out, err = self.run_cli("--run", str(run), "--node", "N")
             self.assertEqual(code, 0, err)
@@ -142,6 +143,33 @@ class TestCheckOwnership(unittest.TestCase):
 
             code, _, _ = self.run_cli("--node", "N")
             self.assertEqual(code, 2)
+
+    def test_run_mode_rejects_invalid_node_and_attempt(self):
+        with tempfile.TemporaryDirectory() as td:
+            for flags, message in (
+                (("--node", "N\n"), "--node 'N\\n' must match"),
+                (("--node", ".."), "--node '..' must match"),
+                (("--node", "N", "--attempt", "١"), "positive ASCII integer"),
+                (("--node", "N", "--attempt", "../1"), "positive ASCII integer"),
+            ):
+                with self.subTest(flags=flags):
+                    code, _, err = self.run_cli("--run", td, *flags)
+                    self.assertEqual(code, 2, err)
+                    self.assertIn(message, err)
+
+    def test_run_mode_rejects_artifact_symlinks_outside_artifacts(self):
+        for rel in ("N", "N/1", "N/1/ownership.json", "N/1/dispatch-identity.json"):
+            with self.subTest(rel=rel), tempfile.TemporaryDirectory() as td:
+                root = Path(td).resolve()
+                run = root / "run"
+                self.plant_attempt(run, "N", "1", worktree=root, base="unused", globs=["src/**"])
+                artifact = run / "artifacts" / rel
+                outside = artifact.rename(root / "outside")
+                artifact.symlink_to(outside, target_is_directory=outside.is_dir())
+
+                code, _, err = self.run_cli("--run", str(run), "--node", "N")
+                self.assertEqual(code, 3, err)
+                self.assertIn(f"{artifact} resolves outside {run / 'artifacts'}", err)
 
     def test_run_mode_defaults_since_to_promoted_branch_point(self):
         with tempfile.TemporaryDirectory() as td:

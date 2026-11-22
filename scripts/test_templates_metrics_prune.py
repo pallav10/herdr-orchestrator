@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -189,6 +190,29 @@ class RenderGraphTests(unittest.TestCase):
         self.assertIn("WRITER_BRANCH", err)
         self.assertIn("REVIEW_FOCUS", err)
 
+    def test_variable_values_keep_literal_placeholders(self):
+        focus = "Check {{TEMPLATE_TOKEN}} and {{not a variable}}"
+        code, out, err = run_module(
+            render_graph,
+            [
+                "render-graph.py", "--template", "writer-reviewer-loop",
+                "--var", "WRITER_OWNS=src/**", "--var", "WRITER_BRANCH=slice/w",
+                "--var", f"REVIEW_FOCUS={focus}",
+            ],
+        )
+        self.assertEqual(code, 0, msg=err)
+        self.assertEqual(json.loads(out)["nodes"]["reviewer"]["description"], focus)
+
+    def test_malformed_placeholder_in_template_is_unresolved(self):
+        with tempfile.TemporaryDirectory() as td:
+            template = Path(td) / "template.json"
+            graph = _single_writer_graph()
+            graph["nodes"]["W"]["description"] = "{{not a variable}}"
+            ioutil.atomic_json(template, graph)
+            code, _out, err = run_module(render_graph, ["render-graph.py", "--template", str(template)])
+            self.assertEqual(code, 2)
+            self.assertIn("{{not a variable}}", err)
+
     def test_overlapping_owns_fails_validate_graph(self):
         code, _out, err = run_module(
             render_graph,
@@ -215,6 +239,8 @@ class RunMetricsTests(unittest.TestCase):
             # Append synthetic timestamped events for 2 attempts (1 failure + 1 block + 1 success).
             events_path = run / "events.jsonl"
             existing = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            for event in existing:
+                event["t"] = "2026-11-22T10:00:00Z"
             synthetic = [
                 {"type": "ready", "node": "W", "from": "planned", "to": "ready", "ts": "2026-11-22T10:00:00Z"},
                 {"type": "dispatch_intent", "node": "W", "attempt": 1, "consumed": [], "owns": ["src/**"], "ts": "2026-11-22T10:00:05Z"},
@@ -226,31 +252,38 @@ class RunMetricsTests(unittest.TestCase):
                 {"type": "attempt_started", "node": "W", "attempt": 2, "ts": "2026-11-22T10:01:00Z"},
                 {"type": "succeeded", "node": "W", "from": "running", "to": "succeeded", "attempt": 2, "artifacts": [], "ts": "2026-11-22T10:01:20Z"},
             ]
+            # Mix authoritative timestamps with legacy ts-only events, including a conflicting pair.
+            for i in (0, 2, 5, 8):
+                synthetic[i]["t"] = synthetic[i].pop("ts")
+            synthetic[-1]["ts"] = "2026-11-22T10:05:00Z"
             events_path.write_text(
                 "".join(json.dumps(ev) + "\n" for ev in existing + synthetic),
                 encoding="utf-8",
             )
 
-            # Provide OMP session JSONL only for attempt 2 to verify partial coverage (0.5) without fabrication.
-            session_log = tmp / "omp-session.jsonl"
+            # Only attempt 2 has a session log, recorded relative to its artifact directory.
+            adir2 = ledger.attempt_dir(run, "W", 2)
+            adir2.mkdir(parents=True, exist_ok=True)
+            session_log = adir2 / "omp-session.jsonl"
             session_log.write_text(
                 json.dumps({"message": {"usage": {"input": 100, "output": 50, "cacheRead": 25, "cost": {"total": 0.0125}}}}) + "\n",
                 encoding="utf-8",
             )
-            adir2 = ledger.attempt_dir(run, "W", 2)
-            adir2.mkdir(parents=True, exist_ok=True)
-            ioutil.atomic_json(adir2 / "summary.json", {"summary": "ok", "session_path": str(session_log)})
+            ioutil.atomic_json(adir2 / "summary.json", {"summary": "ok", "session_path": session_log.name})
 
             code, out, err = run_module(run_metrics, ["run-metrics.py", "--run", str(run), "--write"])
             self.assertEqual(code, 0, msg=err)
             data = json.loads(out)
 
+            self.assertEqual(data["total_wall_sec"], 80.0)
             self.assertEqual(data["node_count"], 1)
             self.assertEqual(data["attempts_total"], 2)
             self.assertEqual(data["retries_total"], 1)
             self.assertEqual(data["token_coverage"], 0.5)
 
             node_m = data["nodes"]["W"]
+            self.assertEqual(node_m["wall_sec"], 80.0)
+            self.assertEqual([a["duration_sec"] for a in node_m["attempts"]], [25.0, 45.0])
             self.assertEqual(node_m["retries"], 1)
             self.assertEqual(node_m["failures"], 1)
             self.assertEqual(node_m["blocks"], 1)
@@ -274,8 +307,36 @@ class RunMetricsTests(unittest.TestCase):
             self.assertEqual(data["token_coverage"], 0.0)
             self.assertIsNone(data["nodes"]["W"]["attempts"][0]["usage"])
 
+    def test_relative_session_path_cannot_escape_attempt_directory(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            _repo, run, _wt_path, _promo_ref = _complete_writer_run(tmp)
+            adir = ledger.attempt_dir(run, "W", 1)
+            outside_log = adir.parent / "outside.jsonl"
+            outside_log.write_text('{"usage": {"input": 10}}\n', encoding="utf-8")
+            (adir / "link.jsonl").symlink_to(outside_log)
+            args = ["run-metrics.py", "--run", str(run)]
+            for candidate in ("../outside.jsonl", "link.jsonl", str(outside_log)):
+                with self.subTest(candidate=candidate):
+                    ioutil.atomic_json(adir / "summary.json", {"session_path": candidate})
+                    code, out, err = run_module(run_metrics, args)
+                    self.assertEqual(code, 0, msg=err)
+                    expected = 1.0 if candidate == str(outside_log) else 0.0
+                    self.assertEqual(json.loads(out)["token_coverage"], expected)
+
+    def test_runtime_error_maps_to_exit_1(self):
+        with patch.object(run_metrics, "compute_metrics", side_effect=RuntimeError("could not read metrics")):
+            code, _out, err = run_module(run_metrics, ["run-metrics.py", "--run", "/run"])
+        self.assertEqual(code, 1)
+        self.assertIn("could not read metrics", err)
+
 
 class PruneRunTests(unittest.TestCase):
+    def setUp(self):
+        herdr = patch.object(prune_run.herdr_cli, "herdr", return_value={"result": {"agents": []}})
+        self.herdr = herdr.start()
+        self.addCleanup(herdr.stop)
+
     def _holder_args(self, repo: Path, run: Path) -> list[str]:
         return [
             "prune-run.py",
@@ -298,6 +359,88 @@ class PruneRunTests(unittest.TestCase):
             self.assertEqual(data["removed_refs"], [promo_ref])
             self.assertTrue(wt_path.exists())
             self.assertIsNotNone(ioutil._git_ref(repo, promo_ref))
+
+    def test_invalidated_node_is_terminal_even_without_herdr_binary(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, run, wt_path, _promo_ref = _complete_writer_run(Path(td))
+            ledger.append_event(run, {"type": "invalidated", "node": "W", "attempt": 1}, holder=HOLDER)
+            missing = ioutil.RunError("herdr not on PATH")
+            missing.__cause__ = FileNotFoundError("herdr")
+            self.herdr.side_effect = missing
+            code, out, err = run_module(prune_run, self._holder_args(repo, run) + ["--dry-run"])
+            self.assertEqual(code, 0, msg=err)
+            self.assertEqual(json.loads(out)["removed_worktrees"], [str(wt_path.resolve())])
+            self.herdr.assert_called_once_with("agent", "list")
+
+    def test_live_recorded_worker_refuses_prune_after_node_succeeds(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, run, wt_path, promo_ref = _complete_writer_run(Path(td))
+            self.herdr.return_value = {"result": {"agents": [{"name": "fo-" + "a" * 24}]}}
+            code, _out, err = run_module(prune_run, self._holder_args(repo, run))
+            self.assertEqual(code, 3)
+            self.assertIn("live Herdr worker", err)
+            self.herdr.assert_called_once_with("agent", "list")
+            self.assertTrue(wt_path.exists())
+            self.assertIsNotNone(ioutil._git_ref(repo, promo_ref))
+
+    def test_artifact_only_worktree_from_revised_out_node_is_pruned(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            repo, run, wt_path, _promo_ref = _complete_writer_run(tmp)
+            old_wt = make_worktree(repo, tmp / "wt-old", "slice/old")
+            old_attempt = ledger.attempt_dir(run, "old", 1)
+            old_attempt.mkdir(parents=True)
+            ioutil.atomic_json(old_attempt / "dispatch-identity.json", {
+                "worktree_path": str(old_wt.resolve()), "branch": "slice/old",
+                "agent": "old-worker-id",
+            })
+            self.herdr.return_value = {"result": {"agents": [{"agent_id": "old-worker-id"}]}}
+            code, _out, err = run_module(prune_run, self._holder_args(repo, run))
+            self.assertEqual(code, 3)
+            self.assertIn("live Herdr worker", err)
+            self.assertTrue(old_wt.exists())
+
+            self.herdr.return_value = {"result": {"agents": [{"agent_id": "unrelated-worker-id"}]}}
+            code, out, err = run_module(prune_run, self._holder_args(repo, run))
+            self.assertEqual(code, 0, msg=err)
+            self.assertCountEqual(json.loads(out)["removed_worktrees"], [str(wt_path.resolve()), str(old_wt.resolve())])
+            self.assertFalse(old_wt.exists())
+
+    def test_symbolic_promotion_ref_refuses_before_pruning(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, run, wt_path, promo_ref = _complete_writer_run(Path(td))
+            git(repo, "symbolic-ref", promo_ref, "refs/heads/main")
+            code, _out, err = run_module(prune_run, self._holder_args(repo, run) + ["--force-undelivered"])
+            self.assertEqual(code, 3)
+            self.assertIn("symbolic promotion ref", err)
+            self.assertEqual(git(repo, "symbolic-ref", promo_ref), "refs/heads/main")
+            self.assertTrue(wt_path.exists())
+
+    def test_promotion_ref_changed_after_validation_is_not_deleted(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, run, wt_path, promo_ref = _complete_writer_run(Path(td))
+            new_sha = git(wt_path, "rev-parse", "HEAD")
+
+            def move_ref(*_args):
+                git(repo, "update-ref", promo_ref, new_sha)
+                return True
+
+            with patch.object(prune_run, "_promotion_ref_delivered_or_merged", side_effect=move_ref):
+                code, _out, err = run_module(prune_run, self._holder_args(repo, run))
+            self.assertEqual(code, 1)
+            self.assertIn("update-ref", err)
+            self.assertEqual(ioutil._git_ref(repo, promo_ref), new_sha)
+
+    def test_malformed_run_repo_is_precondition_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo, run, _wt_path, _promo_ref = _complete_writer_run(Path(td))
+            run_info = ledger.load_run(run)
+            for bad_repo in (None, "repo", "/bad\0repo"):
+                with self.subTest(bad_repo=bad_repo):
+                    with patch.object(ledger, "load_run", return_value={**run_info, "repo": bad_repo}):
+                        code, _out, err = run_module(prune_run, self._holder_args(repo, run))
+                    self.assertEqual(code, 3)
+                    self.assertIn("run.json.repo", err)
 
     def test_dirty_worktree_refuses_exit_3(self):
         with tempfile.TemporaryDirectory() as td:

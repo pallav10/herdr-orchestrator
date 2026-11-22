@@ -92,14 +92,14 @@ def _find_prompt_file(prompts_dir: Path, node_id: str) -> Path | None:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__,
-        usage="dispatch-wave.py --run RUN --session S --holder-workspace W --holder-pane P --epoch E --prompts-dir DIR [--max-parallel N] [--dry-run] [--lock-timeout SECONDS]",
+        usage="dispatch-wave.py --run RUN --session S --holder-workspace W --holder-pane P --epoch E [--prompts-dir DIR] [--max-parallel N] [--dry-run] [--lock-timeout SECONDS]",
     )
     parser.add_argument("--run", required=True)
     parser.add_argument("--session", required=True)
     parser.add_argument("--holder-workspace", required=True)
     parser.add_argument("--holder-pane", required=True)
     parser.add_argument("--epoch", type=int, required=True)
-    parser.add_argument("--prompts-dir", required=True)
+    parser.add_argument("--prompts-dir")
     parser.add_argument("--max-parallel", type=_positive_int, default=None)
     parser.add_argument("--dry-run", action="store_true")
     cli_common.add_lock_timeout_arg(parser)
@@ -107,8 +107,8 @@ def main() -> int:
 
     holder = cli_common.holder_from_args(args)
     run_dir = Path(ioutil.canonical_path(args.run))
-    prompts_dir = Path(ioutil.canonical_path(args.prompts_dir))
-    if not prompts_dir.is_dir():
+    prompts_dir = Path(ioutil.canonical_path(args.prompts_dir)) if args.prompts_dir is not None else None
+    if prompts_dir is not None and not prompts_dir.is_dir():
         raise ioutil.PreconditionError(f"prompts directory does not exist: {prompts_dir}")
 
     snap = ledger.replay(run_dir)
@@ -136,9 +136,6 @@ def main() -> int:
             and (node.get("state") == "ready" or nid in pending_ready)
             and (graph.get("nodes", {}).get(nid) or {}).get("executor") in WAVE_EXECUTORS
         ]
-        running_count = sum(
-            1 for node in nodes_state.values() if isinstance(node, dict) and node.get("state") == "running"
-        )
     else:
         reconciled = scheduler.reconcile(run_dir, holder=holder, lock_timeout=args.lock_timeout)
         state = reconciled["state"]
@@ -150,11 +147,13 @@ def main() -> int:
             and node.get("state") == "ready"
             and (graph.get("nodes", {}).get(nid) or {}).get("executor") in WAVE_EXECUTORS
         ]
-        running_count = sum(
-            1 for node in nodes_state.values() if isinstance(node, dict) and node.get("state") == "running"
-        )
+    running_count = sum(
+        1 for node in nodes_state.values() if isinstance(node, dict) and node.get("state") in graph_model.ACTIVE_STATES
+    )
 
     ranked = rank_nodes(graph, ready_ids)
+    if prompts_dir is None and any(entry["executor"] == "herdr-agent" for entry in ranked):
+        raise ioutil.PreconditionError("--prompts-dir is required when a herdr-agent node is ready")
     slots = None if args.max_parallel is None else max(0, args.max_parallel - running_count)
 
     planned: list[dict[str, Any]] = []
@@ -162,15 +161,18 @@ def main() -> int:
     for entry in ranked:
         nid = entry["node"]
         executor = entry["executor"]
-        if slots is not None and len(planned) >= slots:
+        if slots == 0:
             skipped.append({**entry, "reason": "max_parallel"})
             continue
         if executor == "herdr-agent":
+            assert prompts_dir is not None
             prompt_file = _find_prompt_file(prompts_dir, nid)
             if prompt_file is None:
                 skipped.append({**entry, "reason": f"missing prompt file ({nid}.md or {nid}.txt)"})
                 continue
             planned.append({**entry, "prompt_file": str(prompt_file)})
+            if slots is not None:
+                slots -= 1
         else:
             planned.append(entry)
 
@@ -191,41 +193,34 @@ def main() -> int:
     dispatched: list[dict[str, Any]] = []
     herdr_targets: list[str] = []
 
+    failure = None
     for entry in planned:
         nid = entry["node"]
-        executor = entry["executor"]
-        if executor == "herdr-agent":
-            argv = [
-                sys.executable,
-                str(cli_common.SCRIPTS / "dispatch-agent.py"),
-                "--run", str(run_dir),
-                "--node", nid,
-                "--session", holder["session"],
-                "--holder-workspace", holder["workspace"],
-                "--holder-pane", holder["pane"],
-                "--epoch", str(args.epoch),
-                "--prompt-file", entry["prompt_file"],
-                "--lock-timeout", str(args.lock_timeout),
-            ]
-            res = cli_common.run_child(argv, "dispatch-agent.py")
-            dispatched.append({**entry, "result": res})
+        is_agent = entry["executor"] == "herdr-agent"
+        child_name = "dispatch-agent.py" if is_agent else "run-script.py"
+        argv = [
+            sys.executable,
+            str(cli_common.SCRIPTS / child_name),
+            "--run", str(run_dir),
+            "--node", nid,
+            "--session", holder["session"],
+            "--holder-workspace", holder["workspace"],
+            "--holder-pane", holder["pane"],
+            "--epoch", str(args.epoch),
+            "--lock-timeout", str(args.lock_timeout),
+        ]
+        if is_agent:
+            argv.extend(["--prompt-file", entry["prompt_file"]])
+        try:
+            res = cli_common.run_child(argv, child_name)
+        except cli_common.ChildFailed as exc:
+            failure = {"node": nid, "returncode": exc.returncode, "error": exc.stderr.rstrip()}
+            break
+        dispatched.append({**entry, "result": res})
+        if is_agent and res.get("state") != "blocked":
             target = res.get("worker_id") or res.get("agent")
             if isinstance(target, str) and target:
                 herdr_targets.append(target)
-        elif executor == "script":
-            argv = [
-                sys.executable,
-                str(cli_common.SCRIPTS / "run-script.py"),
-                "--run", str(run_dir),
-                "--node", nid,
-                "--session", holder["session"],
-                "--holder-workspace", holder["workspace"],
-                "--holder-pane", holder["pane"],
-                "--epoch", str(args.epoch),
-                "--lock-timeout", str(args.lock_timeout),
-            ]
-            res = cli_common.run_child(argv, "run-script.py")
-            dispatched.append({**entry, "result": res})
 
     run_meta = ledger.load_run(run_dir)
     run_label = run_meta.get("id") or run_dir.name
@@ -239,16 +234,11 @@ def main() -> int:
             "--label", str(run_label),
         ]
 
-    print(
-        json.dumps(
-            {
-                "dispatched": dispatched,
-                "skipped": skipped,
-                "monitor_cmd": monitor_cmd,
-            }
-        )
-    )
-    return 0
+    payload: dict[str, Any] = {"dispatched": dispatched, "skipped": skipped, "monitor_cmd": monitor_cmd}
+    if failure is not None:
+        payload["failed"] = failure
+    print(json.dumps(payload))
+    return int(failure["returncode"]) if failure is not None else 0
 
 
 if __name__ == "__main__":

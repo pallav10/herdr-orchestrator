@@ -9,7 +9,9 @@ from pathlib import Path
 
 import graph_model
 import ledger
+import liveness
 import run_state
+import scheduler
 from testkit import HOLDER, commit_file, git, new_run, seed_repo
 
 
@@ -158,7 +160,7 @@ class RunStateTest(unittest.TestCase):
             "executor": "herdr-agent",
             "outputs": [{"name": "integration", "type": "integration"}, {"name": "vcs", "type": "vcs"}],
             "worktree": node_id.lower(),
-            "owns": [f"src/{node_id.lower()}/**"],
+            "owns": ["**"],
         }
 
 
@@ -217,6 +219,33 @@ class RunStateTest(unittest.TestCase):
         else:
             path.write_text(text, encoding="utf-8")
         return {"name": name, "type": typ, "path": str(path.resolve()), "hash": run_state.sha256_file(path)}
+
+    def test_validate_graph_rejects_boolean_retry_and_unhashable_entries(self):
+        for fields, error in (
+            ({"retry": {"max_attempts": True, "on": ["invalidated"]}}, "retry.max_attempts"),
+            ({"depends_on": [[]]}, "depends on unknown node"),
+            ({"outputs": [{"name": [], "type": "summary"}]}, "outputs entries"),
+            ({"outputs": [{"name": "summary", "type": []}]}, "outputs entries"),
+        ):
+            with self.subTest(fields=fields), self.assertRaisesRegex(run_state.PreconditionError, error):
+                graph_model.validate_graph({
+                    "schema_version": 1,
+                    "nodes": {"A": {"id": "A", "executor": "task", **fields}},
+                })
+
+    def test_validate_graph_rejects_unhashable_producer_output_before_its_node_is_validated(self):
+        graph = {
+            "schema_version": 1,
+            "nodes": {
+                "B": {"id": "B", "executor": "task", "depends_on": ["A"],
+                      "inputs": [{"alias": "a", "from": "A", "output": "summary"}]},
+                "A": {"id": "A", "executor": "task", "outputs": [
+                    {"name": [], "type": "summary"}, {"name": "summary", "type": "summary"},
+                ]},
+            },
+        }
+        with self.assertRaisesRegex(run_state.PreconditionError, "A.outputs entries"):
+            graph_model.validate_graph(graph)
 
     def test_cycle_and_unserialized_overlap_rejected_serialized_overlap_allowed(self):
         cycle = {"schema_version": 1, "nodes": {"A": {"id": "A", "executor": "task", "depends_on": ["B"]}, "B": {"id": "B", "executor": "task", "depends_on": ["A"]}}}
@@ -331,11 +360,68 @@ class RunStateTest(unittest.TestCase):
         self.assertTrue((Path(run) / "artifacts" / "B" / "1" / "consumed_artifacts.json").exists())
         self.assertIn(result["state"]["nodes"]["B"]["state"], {"planned", "ready"})
 
+    def test_forced_artifact_hash_invalidates_consumer(self):
+        graph = {
+            "schema_version": 1,
+            "nodes": {
+                "A": {"id": "A", "executor": "task", "outputs": [{"name": "summary", "type": "summary"}]},
+                "B": {"id": "B", "executor": "task", "depends_on": ["A"],
+                      "inputs": [{"alias": "a", "from": "A", "output": "summary"}]},
+            },
+        }
+        run = self.new_run(graph=graph)
+        self.start_attempt(run, "A")
+        old = self.artifact(run, "A", 1, "summary", "summary", "old")
+        self.append_event(run, {"type": "succeeded", "node": "A", "attempt": 1, "artifacts": [old]})
+        self.reconcile(run)
+        self.start_attempt(run, "B")
+        self.append_event(run, {"type": "succeeded", "node": "B", "attempt": 1, "artifacts": []})
+        self.assertEqual(scheduler.invalidate_if_stale(run_state.replay(run)["state"], graph), [])
+
+        new = self.artifact(run, "A", 1, "summary", "summary", "new")
+        self.append_event(run, {"type": "artifact_forced", "node": "A", "attempt": 1,
+                                "forced": ["summary.json"], "hashes": {"summary.json": new["hash"]}})
+        state = run_state.replay(run)["state"]
+        self.assertEqual(state["nodes"]["A"]["artifacts"], [new])
+        invalidated = [event for event in scheduler.invalidate_if_stale(state, graph)
+                       if event["type"] == "invalidated"]
+        self.assertEqual(
+            [(event["node"], event["old_hash"], event["new_hash"]) for event in invalidated],
+            [("B", old["hash"], new["hash"])],
+        )
+
+    def test_ordering_only_dependents_block_on_terminal_dependency(self):
+        graph = {"nodes": {"A": {}, "B": {"depends_on": ["A"]}}}
+        for terminal in ("skipped", "invalidated"):
+            state = {"dispatch": True, "nodes": {
+                "A": {"state": terminal, "attempt": 1}, "B": {"state": "planned", "attempt": 0},
+            }}
+            with self.subTest(terminal=terminal):
+                events = scheduler._computed_lifecycle_events(state, graph)
+                self.assertEqual([(event["node"], event["type"], event["reason"]) for event in events],
+                                 [("B", "blocked", f"dep A is {terminal}")])
+
     def test_native_executor_spawned_by_other_session_interrupts(self):
         state = {"nodes": {"T": {"executor": "task", "state": "running", "attempt": 1, "handle": {"spawning_session": "old", "job": "job-1"}}, "H": {"executor": "herdr-agent", "state": "running"}}}
         events = run_state.maybe_interrupt_native(state, "current")
         self.assertEqual([event["node"] for event in events], ["T"])
         self.assertEqual(events[0]["type"], "interrupted")
+
+    def test_herdr_inventory_refuses_duplicate_or_misplaced_managed_worker(self):
+        live = {
+            "workspace": "ws", "pane": "pane-1", "identity_kind": "managed-name",
+            "worker_id": "fo-" + "a" * 24,
+            "tokens": {"provenance": "orchestrator", "run": "r1", "node": "H", "attempt": "1"},
+        }
+        state = {"nodes": {"H": {"executor": "herdr-agent", "state": "running",
+                                 "attempt": 1, "handle": live}}}
+        self.assertEqual(liveness.maybe_interrupt_herdr(state, [live]), [])
+        for records, error in (
+            ([live, dict(live)], "duplicate live Herdr identity"),
+            ([{**live, "pane": "pane-2"}], "unexpected surface"),
+        ):
+            with self.subTest(error=error), self.assertRaisesRegex(run_state.PreconditionError, error):
+                liveness.maybe_interrupt_herdr(state, records)
 
     def test_promotion_recovery_appends_promoted_or_blocks_unexpected_ref(self):
         graph = {"schema_version": 1, "nodes": {"D": self.promotion_node()}}
@@ -771,6 +857,15 @@ class RunStateTest(unittest.TestCase):
         with self.assertRaisesRegex(run_state.PreconditionError, "running or blocked"):
             self.append_event(idle, {"type": "interrupted", "node": "T", "attempt": 0})
 
+
+    def test_graph_revision_cannot_remove_ready_node_with_dispatch_intent(self):
+        graph = {"schema_version": 1, "nodes": {"A": {"id": "A", "executor": "task"}}}
+        run = self.new_run(graph=graph)
+        self.append_event(run, {"type": "dispatch_intent", "node": "A", "attempt": 1})
+        state = run_state.replay(run)["state"]
+        self.assertEqual(state["nodes"]["A"]["state"], "ready")
+        with self.assertRaisesRegex(run_state.PreconditionError, "cannot remove node A.*dispatch_intent"):
+            ledger._validate_revision_against_runtime(Path(run), state, {"nodes": {}}, graph)
 
     def test_promotion_intent_rejects_foreign_ref_and_stale_expected_old(self):
         repo = self.repo()

@@ -118,6 +118,18 @@ def _check_git_and_repo(repo_arg: str | None, docs_dir_arg: str | None) -> list[
         checks.append(_check("gitignore", "fail", f"docs dir {docs_path} is outside repo {repo_root}"))
         return checks
 
+    symlinked = [sub for sub in ("runs", "sessions") if (docs_path / sub).is_symlink()]
+    if symlinked:
+        checks.append(
+            _check(
+                "docs_symlinks",
+                "fail",
+                "docs runtime dir(s) must not be symlinks: " + ", ".join(f"/{(docs_rel / sub).as_posix()}" for sub in symlinked),
+            )
+        )
+    else:
+        checks.append(_check("docs_symlinks", "ok", f"/{(docs_rel / 'runs').as_posix()} and /{(docs_rel / 'sessions').as_posix()} are not symlinks"))
+
     missing: list[str] = []
     for sub in ("runs", "sessions"):
         rel = (docs_rel / sub).as_posix().rstrip("/") + "/"
@@ -205,7 +217,17 @@ def _check_context_extension() -> dict[str, str]:
             data = json.loads(snap_path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             return _check("omp_context_extension", "warn", f"unreadable context snapshot: {exc}")
-        observed = data.get("observed_at_ms") if isinstance(data, dict) else None
+        if not isinstance(data, dict):
+            return _check("omp_context_extension", "warn", "snapshot JSON is not an object")
+        available = data.get("available")
+        if available is False:
+            reason = data.get("reason")
+            detail = f"context snapshot unavailable ({reason})" if isinstance(reason, str) and reason else "context snapshot unavailable"
+            status = "warn" if reason == "compaction" else "fail"
+            return _check("omp_context_extension", status, detail)
+        if available is not None and available is not True:
+            return _check("omp_context_extension", "fail", f"context snapshot has invalid available={available!r}")
+        observed = data.get("observed_at_ms")
         if isinstance(observed, (int, float)) and not isinstance(observed, bool):
             age_ms = int(time.time() * 1000) - int(observed)
             if 0 <= age_ms <= context_usage.CONTEXT_MAX_AGE_MS:

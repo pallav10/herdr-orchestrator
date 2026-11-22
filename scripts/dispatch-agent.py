@@ -154,6 +154,10 @@ def main() -> int:
         raise ioutil.PreconditionError(
             f"epoch {args.epoch} does not match controller epoch {controller_epoch}"
         )
+    plan = snap["state"]["nodes"].get(node_id)
+    if plan is not None and plan.get("executor") != "herdr-agent":
+        raise ioutil.PreconditionError(f"node {node_id} executor must be herdr-agent")
+
     result = scheduler.reconcile(run, holder=holder, lock_timeout=args.lock_timeout)
     state = result["state"]
     nodes = state.get("nodes") if isinstance(state.get("nodes"), dict) else {}
@@ -173,6 +177,8 @@ def main() -> int:
     record_path = attempt_dir / "launch-complete.json"
     
     if node.get("state") == "ready":
+        if node.get("executor") != "herdr-agent":
+            raise ioutil.PreconditionError(f"node {node_id} executor must be herdr-agent")
         if not graph_model.has_current_dispatch_intent(node):
             ledger.append_event(
                 run,

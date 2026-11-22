@@ -61,7 +61,11 @@ def _resolve_feedback_text(raw: str | None) -> str | None:
     if raw is None:
         return None
     candidate = Path(raw)
-    if candidate.is_file():
+    try:
+        is_file = candidate.is_file()
+    except OSError:
+        return raw
+    if is_file:
         return candidate.read_text(encoding="utf-8")
     return raw
 
@@ -151,7 +155,7 @@ def invalidate_node(
         ledger.append_events_locked(run_path, events, holder=holder)
 
         feedback_path: str | None = None
-        if feedback_text is not None:
+        if feedback_text is not None and node_id in retried:
             next_attempt = int(nodes[node_id].get("attempt", 0)) + 1
             dest = ledger.attempt_dir(run_path, node_id, next_attempt) / "feedback.md"
             dest.parent.mkdir(parents=True, exist_ok=True)

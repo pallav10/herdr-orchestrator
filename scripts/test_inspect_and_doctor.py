@@ -203,6 +203,33 @@ class InspectRunTests(unittest.TestCase):
             self.assertEqual(code_bad, 2)
             self.assertIn("unknown node", err_bad)
 
+    def test_integration_output_recommends_promotion_without_integrates_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            run = (Path(td) / "run").resolve()
+            plant_run_files(
+                run,
+                nodes={"A": {"executor": "herdr-agent", "outputs": [{"name": "receipt", "type": "integration"}]}},
+            )
+            write_events(run, [{"type": "succeeded", "node": "A", "attempt": 1, "epoch": 1}])
+
+            report = inspect_mod.inspect_run(str(run))
+            self.assertIn(
+                {"action": "promote", "node": "A", "detail": "run_state.promote() for integrator A attempt 1"},
+                report["next_actions"],
+            )
+
+    def test_ready_script_recommends_run_script_command(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            run = (Path(td) / "run").resolve()
+            plant_run_files(run, nodes={"A": {"executor": "script", "outputs": []}})
+            write_events(run, [{"type": "ready", "node": "A", "attempt": 0, "epoch": 1}])
+
+            report = inspect_mod.inspect_run(str(run))
+            self.assertIn(
+                {"action": "dispatch", "node": "A", "detail": f"run-script.py --run {run} --node A"},
+                report["next_actions"],
+            )
+
     def test_truncated_tail_and_draining_lease_next_actions(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             run = Path(td) / "run"
