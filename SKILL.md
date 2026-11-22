@@ -6,97 +6,66 @@ license: MIT
 ---
 # Herdr Orchestrator
 
-## Purpose
-One controller owns the task graph and durable run events; workers execute slices.
+One controller owns the task graph and durable run ledger (`events.jsonl`); workers execute slices.
 Use native `task`/`workflow` for bounded session-local work, `herdr-agent` for durable workers/isolated writers, and `pane` for existing user panes.
-Planning outside Herdr is supported; live pane operations require the chosen Herdr session (`HERDR_ENV=1`).
 
 ## Choose the workflow first
-- **Bounded existing-pane work:** use native Herdr controls for a user-directed task, such as read-only analysis. Verify the chosen session and exact explicit target (or supported `--current`), submit once, and use one background wait or edge notification. No graph/session scaffolding is needed. Follow the [native pane playbook](references/controller-playbook.md#native-existing-pane-playbook).
-- **Durable coordinated execution:** use the graph/adapters below when leases, ownership, immutable dispatch evidence, receipts, promotion or controller handoff are required. Native prompting grants none of those guarantees and cannot satisfy a blocked durable graph node.
-- Discover installed CLI help once and cache verified facts until evidence changes. Bare command groups may print help with exit 2; run independent help probes separately, not chained with `&&`. Do not reread the whole skill or repeatedly probe status for a simple native prompt.
+- **Bounded existing-pane work:** use native Herdr controls (`herdr agent prompt` / background wait). No graph or session scaffolding needed. See [native pane playbook](references/controller-playbook.md#native-existing-pane-playbook).
+- **Durable coordinated execution:** use `scripts/ho.py` below. It auto-resolves `HERDR_WORKSPACE_ID`, `HERDR_PANE_ID`, canonical `session`/`run`, and current `epoch`, and drives the entire run through `ho next`.
 
-Resolve adapters relative to this skill's installed directory; use absolute script paths when the controller's working directory is the target repository. The plugin bundles a context-only extension for rotation's measured gate. Restart OMP after plugin installation, keep Herdr's stock lifecycle integration, and avoid loading a second context snapshot exporter.
+Resolve `ho.py` relative to this skill's installed directory (use absolute path when `cwd` is the target repo).
 
-## State authority
-- Canonical `session.json.run` locates execution; session paths identify pane history, not execution authority.
-- Append-only `<run>/events.jsonl` is authoritative; `state.json`, `controller.json`, and `status.md` are disposable replay projections.
-- Replay preserves valid pre-transfer history; exact holder, lease, and replayed epoch authorize mutations. Truncated tails refuse mutation.
-- Handoff prose supplies human context, not run location or freshness; Herdr `idle`/`done` is not controller success.
-- `run.lock` exclusively spans authorization through external launch; bounded acquisition/owner diagnostics follow the approved fallback, not a concurrent-dispatch protocol.
+## The 4-Step `ho.py` Loop
+Let `HO="python3 /absolute/skill/scripts/ho.py"`.
 
-## Toolbox
-Run `python3 scripts/<name>.py --help` for flags; scripts print JSON, monitor prints flushed JSONL. Exit codes: 0 success, 1 runtime, 2 usage, 3 refusal; prompt additionally 4 blocked, monitor 2 timeout, ownership 3 findings.
-Lock-taking entrypoints accept `--lock-timeout SECONDS`: finite positive, default 120; invalid input exits 2, acquisition timeout refuses with exit 3. See [locking contract](references/run-state-api.md#events-locking-and-dispatch).
+1. **Initialize** the pane's gitignored session and canonical run (add `--pane TARGET` for any planned user-owned pane):
+   ```sh
+   $HO init --dir /absolute/repo/docs --job change-name
+   ```
+2. **Accept** the task graph (accepts `schema_version` default `1` and `nodes` as dict or `[{id, ...}]` list):
+   ```sh
+   $HO accept --graph /tmp/graph.json
+   ```
+   Verify the returned `base_sha` matches the commit your worker briefs assume.
+3. **Loop on `ho next`** until `"phase": "done"`:
+   ```sh
+   $HO next
+   ```
+   `ho next` inspects replayed + live state and returns ONE JSON object:
+   `{"phase": "...", "summary": "...", "nodes": {...}, "commands": [...]}`.
+   Execute the exact verbatim commands returned in `commands`:
+   - `dispatch`: `$HO dispatch NODE --prompt-file FILE [--cwd DIR] [--model-role R]`
+   - `monitor`: `$HO monitor [--timeout S]` (run in background so controller stays free)
+   - `finish`: `$HO finish NODE [--attempt A] [--force]`
+   - `promote`: `$HO promote NODE [--attempt A]` (auto-resolves `new_sha` from receipts; no Python heredoc)
+   - `retire`: `$HO retire --all`
+   - `status`: `$HO status` (or `$HO next --reconcile` to run holder-authorized reconcile first)
+4. **Stop** when `ho next` reports `"phase": "done"`.
 
-- `init-docs.py` — open/reuse the exact pane's gitignored session and canonical run binding.
-- `validate-graph.py` — offline graph validator/linter (`--graph-file FILE|-`): iterative Tarjan SCC cycles, concurrent ownership overlaps, topological waves, max parallelism (exit 0 valid, 3 invalid).
-- `accept-graph.py` — CLI wrapper for `ledger.accept_graph` (`--run`, `--graph-file FILE|-`, `--repo`, holder flags, `--lock-timeout`).
-- `dispatch-agent.py` — controller-facing Herdr dispatch, immutable intent, confirmed launch, ledger transition; `--cwd` is for read-only workers.
-- `dispatch-wave.py` — reconcile readiness, rank ready `herdr-agent`/`script` nodes by critical-path depth and downstream fan-out, enforce `--max-parallel`, and dispatch (`--dry-run` previews order without mutating).
-- `run-script.py` — execute a deterministic `script` node directly (no LLM pane), write hashed `script-result.json` (plus declared `summary` outputs), and record terminal `succeeded`/`failed`.
-- `spawn-agent.py` — low-level create/start/resume with persisted identity and launch sidecars.
-- `self-improve.py` — queue a detached improvement pane in a private skill clone, outside the reporting run.
-- `prompt-agent.py` — initial pane dispatch or exact-identity blocked-attempt continuation; controller records returned transition.
-- `reconcile.py` — repair projections or holder-authorized observation/lifecycle/notifications; compact default, `--full` for complete state.
-- `monitor-agents.py` — change-only adaptive polling by default; `--every-poll` prints each poll, `--min-interval` sets initial/reset cadence.
-- `collect-agent.py` — status/summaries and immutable receipts; stdout summary capped at 1,500 characters, `--full-summary` uncaps it.
-- `check-ownership.py` — classify slice changes; run mode derives the writer's merge-base, manifest mode accepts `--base`/`--since`.
-- `finish-agent.py` — collect, validate ownership/receipts and optional `verdict.json`, and record success/failure or print integrator promotion call; optional `--since`/`--force`.
-- `promote-run.py` — CLI wrapper for `promotion.promote` (default) or `promotion.deliver_branch` (`--deliver-only [--branch BRANCH]`) with holder flags and `--lock-timeout`.
-- `invalidate-node.py` — selectively invalidate a succeeded node (and optional transitive dependents with `--cascade`/`--no-cascade`), append `retried` when allowed or `--retry` is set, and persist optional `--feedback` to the next attempt's `feedback.md`.
-- `retire-agents.py` — receipt-gated closure of orchestrator-created surfaces; optional `--collect`/`--force-unsettled` do not bypass run gates.
-- `rotate.py` — measured-context gate, lease drain, native quiescence, successor bootstrap and exact acknowledgment.
-- `ack-handoff.py` — successor session creation/recovery and exact nonce/holder lease transfer.
-- `inspect-run.py` — read-only replay and timeline inspector (`--run`, `--format json|text`, `--node`); reports node durations, unverified lock owner diagnostics, and concrete next actions.
-- `doctor.py` — read-only environment, git/gitignore, Herdr protocol (`--skip-herdr`), and OMP context extension preflight; exits 0 when no check fails, 3 on any failure.
-- `run_state.py` — controller Python facade; `load_state(run)` returns replayed state (see API reference).
-- `render-graph.py` — render parameterized templates from `references/templates/graphs/` (`--template`, `--var KEY=VAL`, `--out`), failing closed (exit 2) on unresolved placeholders and validating with `graph_model.validate_graph()`.
-- `run-metrics.py` — read-only replay of `<run>/events.jsonl` for per-node/run wall, active/wait, retry/failure/block, and optional OMP session JSONL token/cost metrics (`--run`, `--write` for `<run>/metrics.json`).
-- `prune-run.py` — opt-in post-delivery cleanup of orchestrator-created linked worktrees and `refs/heads/herdr/<run-id>` (`--dry-run`, `--force-undelivered`, `--lock-timeout`); refuses active/non-terminal nodes, dirty worktrees, unmerged promotion refs, or foreign holders, and never touches the primary checkout or `main`/`master`.
+## Companion & Low-Level Scripts
+Use `ho.py` as the primary front-door. Specialized tools and all underlying low-level scripts remain directly callable when needed:
+- **Planning & preflight:** `validate-graph.py` (Tarjan SCC cycles, ownership overlaps, waves), `render-graph.py` (`references/templates/graphs/`), `doctor.py` (env/git/Herdr preflight).
+- **Waves, scripts & control:** `dispatch-wave.py` (critical-path/fan-out wave dispatch), `run-script.py` (deterministic `script` nodes), `invalidate-node.py` (selective cascade rerun + `feedback.md`).
+- **Inspection & lifecycle:** `inspect-run.py` (timeline + next actions), `run-metrics.py` (durations/retries/tokens), `prune-run.py` (fail-closed worktree/ref GC).
+- **Core adapters:** `init-docs.py`, `accept-graph.py`, `dispatch-agent.py`, `spawn-agent.py`, `prompt-agent.py`, `reconcile.py`, `monitor-agents.py`, `collect-agent.py`, `check-ownership.py`, `finish-agent.py`, `promote-run.py`, `retire-agents.py`, `rotate.py`, `ack-handoff.py`, `run_state.py`.
+Exit codes: 0 ok, 1 runtime, 2 usage, 3 refusal/precondition (all lock-taking commands accept `--lock-timeout SECONDS`, default 120).
 
-## Orchestration loop
-Use absolute `RUN`, `SESSION`, repository paths and concrete holder `H={"workspace": W, "pane": P, "session": SESSION}`; `E` is the replayed epoch. Commands below use `python3 scripts/`.
-
-1. Open: `init-docs.py --dir docs --job JOB`; add `--pane TARGET` for **every planned user-owned pane** so unsupported stable identity or CLI protocol errors refuse before run/session metadata writes. Use returned canonical session/run, not informational symlinks. Endpoint compatibility alone does not establish pane identity support; see [identity preflight](references/identity-reattach.md#user-owned-pane-compatibility-preflight).
-2. Accept: `run_state.accept_graph(RUN, graph, repo=REPO, holder=H)` after planning dependencies, ownership, outputs, executors and routing; wait for acceptance before dispatch. The returned `base_sha` is authoritative (`HEAD` of the supplied `repo` at first acceptance; a `base_sha` submitted in the graph is ignored): verify it against the commit the briefs assume before dispatch. Continuing a previous candidate in a fresh writer: [accepted base and continuation](references/controller-playbook.md#211-accepted-base-and-continuing-a-previous-candidate).
-3. Reconcile: `reconcile.py --run RUN`; add `--session SESSION --holder-workspace W --holder-pane P` for observation/lifecycle and `--notify` for edge notifications.
-4. Dispatch: `dispatch-agent.py --run RUN --node NODE --session SESSION --holder-workspace W --holder-pane P --epoch E --prompt-file FILE`; contextual writers derive branch/base from the graph, read-only workers may add `--cwd DIR`.
-5. Monitor: `monitor-agents.py TARGET... --notify-pane P --label RUN_ID`; use an auto-delivering harness job and/or pane notification, not a detached file-only process.
-6. Finish: `finish-agent.py --run RUN --node NODE --attempt N --session SESSION --holder-workspace W --holder-pane P`; default ownership baseline is `git merge-base <promotion_ref> HEAD`, not the original graph base for later waves.
-7. Promote integrator: execute the exact `run_state.promote(...)` call printed by finish; it records terminal success. Recover with holder-authorized `reconcile.py --run RUN --repo REPO`.
-8. Retire: `retire-agents.py TARGET... --run RUN --session SESSION --holder-workspace W --holder-pane P` after the reference's terminal/consumption/promotion gates.
-
-For graph-enrolled native `task`/`workflow` launches (not direct Herdr pane prompting), record intent, inject `prepare_dispatch_prompt`, launch, then record handle/model in `dispatched`. Supply `--native-inventory-complete` only for a genuinely complete harness inventory, with one `--live-native-id` per live handle; omission is unknown, explicit empty is authoritative. Full semantics: [run-state-api](references/run-state-api.md).
+## State authority & Safety
+- `session.json.run` locates execution; append-only `<run>/events.jsonl` is authoritative. Never edit caches (`state.json`, `controller.json`, `status.md`) or treat Herdr `idle`/`done` as controller success.
+- Never run overlapping writers concurrently; serialize shared `owns` paths (non-integrator `**` overlaps everything).
+- Never use `latest`, relative run paths, or another pane's session as holder authority.
+- Never retire user-owned `pane` executors, mutate the primary checkout/promotion ref by hand, or stop the active Herdr server.
+- Rotate only at fresh measured context occupancy **>=50%** via `python3 scripts/rotate.py --session SESSION`; see [rotation](references/rotation.md).
 
 ## Self-improvement loop
-While using this skill, automatically queue each distinct, evidenced skill defect or concrete improvement:
+Queue distinct, evidenced skill defects in a detached private clone without blocking the current run:
 `python3 /absolute/skill/scripts/self-improve.py --skill-repo /absolute/editable-skill-repo --finding "Observed issue; evidence; proposed change; acceptance check"`
 
-Continue the ongoing run immediately. The launcher returns a queued-job receipt; it does not wait for cloning, pane startup, or implementation. Never add this worker to the run graph, dependencies, inventory, receipts, or promotion path, and never wait on its result. A maintenance-launch failure is not a failure of the reporting run; existing safety refusals still apply.
-
-The worker uses an independent clone/branch, not the active checkout or installed skill. It must not spawn another improvement worker. Fixes remain private candidates: no automatic merge, push, installation, or reload during the ongoing run. If the editable source is unavailable, report that prerequisite without modifying the installation. Details: [detached improvements](references/identity-reattach.md#detached-self-improvement).
-
-## Rotation trigger
-Rotate only at fresh, identity-validated measured context occupancy **>=50%**, using `rotate.py --session SESSION`; low usage means continue in this pane.
-Unknown/stale/unavailable measurements refuse before side effects; [rotation procedure and extension recovery](references/rotation.md) covers bootstrap, acknowledgment and worker reattachment.
-
-## Safety
-- Never run overlapping writers concurrently; serialize shared paths, and remember non-integrator `**` overlaps everything.
-- Never authorize from caches, sidebar order, labels, focused panes, or ambiguous identity; parse exact IDs/tokens from JSON.
-- Never use `latest`, relative run paths, or another pane's session as execution/holder authority.
-- Never resubmit full prompt text after unconfirmed delivery or classify errors from prose; structured-only single delivery permits only the bounded Enter recovery described in the identity reference.
-- Never retire user-owned `pane` executors or replacement surfaces; predecessor closure is successor-driven after tokenized ack and receipt gates.
-- Never mutate the primary checkout or checked-out promotion refs by hand; closure retains worktrees/branches and does not delete source/data.
-- Never stop the active Herdr server or substitute native jobs for Herdr roles after protocol mismatch; stop operations and resolve the chosen session's mismatch.
-- Never pre-drain or hand-append lease drain/transfer events to bypass rotation's measured gate.
-Use background/no-focus operations unless the user requests focus.
-
-## Read when
-- Identity, routing, resume, blocked delivery or worker recovery: [identity-reattach](references/identity-reattach.md).
-- Context threshold, successor bootstrap, lease transfer or extension reload: [rotation](references/rotation.md).
-- Finishing writers, promotion, consumption or workspace closure: [retire-promote](references/retire-promote.md).
-- Python controller calls, replay shapes or exact inventory semantics: [run-state-api](references/run-state-api.md).
-- Session/run layout, receipts and metadata: [session-docs](references/session-docs.md).
-- Concrete operational history and failure examples: [controller-playbook](references/controller-playbook.md).
-- Pane ports and shared infrastructure: [pane-environment](references/pane-environment.md).
+## References
+- Identity, routing, resume, blocked delivery, worker recovery: [identity-reattach](references/identity-reattach.md)
+- Context threshold, successor bootstrap, lease transfer: [rotation](references/rotation.md)
+- Finishing writers, promotion, consumption, workspace closure: [retire-promote](references/retire-promote.md)
+- Python controller calls, replay shapes, locking contract: [run-state-api](references/run-state-api.md)
+- Session/run layout, receipts, metadata: [session-docs](references/session-docs.md)
+- Operational history & failure examples: [controller-playbook](references/controller-playbook.md)
+- Pane ports & shared infrastructure: [pane-environment](references/pane-environment.md)
