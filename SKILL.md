@@ -33,6 +33,8 @@ Lock-taking entrypoints accept `--lock-timeout SECONDS`: finite positive, defaul
 - `validate-graph.py` — offline graph validator/linter (`--graph-file FILE|-`): iterative Tarjan SCC cycles, concurrent ownership overlaps, topological waves, max parallelism (exit 0 valid, 3 invalid).
 - `accept-graph.py` — CLI wrapper for `ledger.accept_graph` (`--run`, `--graph-file FILE|-`, `--repo`, holder flags, `--lock-timeout`).
 - `dispatch-agent.py` — controller-facing Herdr dispatch, immutable intent, confirmed launch, ledger transition; `--cwd` is for read-only workers.
+- `dispatch-wave.py` — reconcile readiness, rank ready `herdr-agent`/`script` nodes by critical-path depth and downstream fan-out, enforce `--max-parallel`, and dispatch (`--dry-run` previews order without mutating).
+- `run-script.py` — execute a deterministic `script` node directly (no LLM pane), write hashed `script-result.json` (plus declared `summary` outputs), and record terminal `succeeded`/`failed`.
 - `spawn-agent.py` — low-level create/start/resume with persisted identity and launch sidecars.
 - `self-improve.py` — queue a detached improvement pane in a private skill clone, outside the reporting run.
 - `prompt-agent.py` — initial pane dispatch or exact-identity blocked-attempt continuation; controller records returned transition.
