@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "nodes": {
+    "writer": {
+      "id": "writer",
+      "executor": "herdr-agent",
+      "depends_on": [],
+      "owns": ["{{WRITER_OWNS}}"],
+      "worktree": {"branch": "{{WRITER_BRANCH}}"},
+      "outputs": [
+        {"name": "summary", "type": "summary"},
+        {"name": "vcs", "type": "vcs"}
+      ],
+      "retry": {"max_attempts": 2, "on": ["failed", "interrupted"]}
+    },
+    "reviewer": {
+      "id": "reviewer",
+      "executor": "herdr-agent",
+      "depends_on": ["writer"],
+      "owns": [],
+      "description": "{{REVIEW_FOCUS}}",
+      "inputs": [
+        {"alias": "writer_vcs", "from": "writer", "output": "vcs", "required": true},
+        {"alias": "writer_summary", "from": "writer", "output": "summary", "required": true}
+      ],
+      "outputs": [
+        {"name": "summary", "type": "summary"}
+      ]
+    }
+  }
+}

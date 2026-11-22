@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "nodes": {
+    "slice_a": {
+      "id": "slice_a",
+      "executor": "herdr-agent",
+      "depends_on": [],
+      "owns": ["{{SLICE_A_OWNS}}"],
+      "worktree": {"branch": "{{SLICE_A_BRANCH}}"},
+      "outputs": [
+        {"name": "summary", "type": "summary"},
+        {"name": "vcs", "type": "vcs"}
+      ],
+      "retry": {"max_attempts": 2, "on": ["failed", "interrupted"]}
+    },
+    "slice_b": {
+      "id": "slice_b",
+      "executor": "herdr-agent",
+      "depends_on": [],
+      "owns": ["{{SLICE_B_OWNS}}"],
+      "worktree": {"branch": "{{SLICE_B_BRANCH}}"},
+      "outputs": [
+        {"name": "summary", "type": "summary"},
+        {"name": "vcs", "type": "vcs"}
+      ],
+      "retry": {"max_attempts": 2, "on": ["failed", "interrupted"]}
+    },
+    "integrate": {
+      "id": "integrate",
+      "executor": "herdr-agent",
+      "depends_on": ["slice_a", "slice_b"],
+      "owns": ["**"],
+      "worktree": {},
+      "inputs": [
+        {"alias": "slice_a", "from": "slice_a", "output": "vcs", "required": true},
+        {"alias": "slice_b", "from": "slice_b", "output": "vcs", "required": true}
+      ],
+      "outputs": [
+        {"name": "summary", "type": "summary"},
+        {"name": "vcs", "type": "vcs"},
+        {"name": "integration", "type": "integration"}
+      ],
+      "retry": {"max_attempts": 2, "on": ["failed", "interrupted"]}
+    }
+  }
+}

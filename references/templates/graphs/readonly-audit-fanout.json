@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "nodes": {
+    "audit_a": {
+      "id": "audit_a",
+      "executor": "herdr-agent",
+      "depends_on": [],
+      "owns": [],
+      "description": "{{AUDIT_A_SCOPE}}",
+      "outputs": [
+        {"name": "summary", "type": "summary"}
+      ]
+    },
+    "audit_b": {
+      "id": "audit_b",
+      "executor": "herdr-agent",
+      "depends_on": [],
+      "owns": [],
+      "description": "{{AUDIT_B_SCOPE}}",
+      "outputs": [
+        {"name": "summary", "type": "summary"}
+      ]
+    },
+    "synthesize": {
+      "id": "synthesize",
+      "executor": "herdr-agent",
+      "depends_on": ["audit_a", "audit_b"],
+      "owns": [],
+      "description": "{{SYNTHESIS_GOAL}}",
+      "inputs": [
+        {"alias": "audit_a", "from": "audit_a", "output": "summary", "required": true},
+        {"alias": "audit_b", "from": "audit_b", "output": "summary", "required": true}
+      ],
+      "outputs": [
+        {"name": "summary", "type": "summary"}
+      ]
+    }
+  }
+}
