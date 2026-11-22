@@ -16,6 +16,8 @@ Import `run_state` with `scripts/` on the Python path. It is the explicit contro
 | `bind_session_run(RUN, holder=H, lock_timeout=120)` | `{state, controller, event}` after exact initial holder binding. |
 | `validate_graph(graph)` | `None` on valid graph; otherwise refusal, no accepted revision. |
 | `accept_graph(RUN, graph, repo=REPO, holder=H, lock_timeout=120)` | Accepted graph document: `schema_version`, `run`, `base_sha`, `promotion_ref`, `nodes`. |
+| `validate-graph.py --graph-file FILE\|-` | Offline static linter: `{valid, errors, cycles, overlaps, waves, max_parallelism}` using `validate_graph` plus iterative Tarjan SCC cycle detection; exits 0 valid, 3 invalid. |
+| `accept-graph.py --run RUN --graph-file FILE\|- --repo REPO ...` | CLI wrapper for `ledger.accept_graph` with holder flags and `--lock-timeout`. |
 
 State has `schema_version`, `run`, `epoch`, `nodes`, `notified`, `dispatch`; nodes carry executor/attempt/state, reason/question, recorded routing/handle, artifacts and immutable dispatch/consumption history. Controller has `epoch`, `workspace`, `pane`, `session`, `run`, `dispatch`, `lease`. Applied `events` omit skipped stale post-transfer mutations; replay preserves valid pre-transfer history. Notification keys are sorted/unique; do not confuse the full state notification history with notifications emitted by the current call.
 
@@ -41,7 +43,7 @@ The exclusive `fcntl.flock` on `run.lock` spans authorization **and external lau
 
 The requested fallback keeps every existing exclusive critical section and `_DISPATCH_GUARD_DEPTH` nested-append refusal. `ledger.with_lock(run_dir, *, lock_timeout=120, node=None)` bounds acquisition, not time spent inside the critical section. Locked facade APIs `bind_session_run`, `accept_graph`, `append_event`, `dispatch_guard`, `reconcile`, `promote`, `deliver_branch`, and `recover_promotion` accept keyword `lock_timeout=120` without changing their return shapes. Already-locked append helpers do not reacquire the lock.
 
-Lock-taking CLI entrypoints `init-docs.py`, `dispatch-agent.py`, `spawn-agent.py`, `prompt-agent.py`, `collect-agent.py`, `finish-agent.py`, `retire-agents.py`, `rotate.py`, `ack-handoff.py`, and `reconcile.py` accept `--lock-timeout SECONDS`: finite positive, default 120; invalid values are usage errors (2), acquisition timeout is a precondition refusal (3). Forward the same bound to lock-taking child adapters. A child trying to reacquire a parent's held lock refuses within the bound; fallback does not make nested collection concurrent.
+Lock-taking CLI entrypoints `init-docs.py`, `accept-graph.py`, `dispatch-agent.py`, `spawn-agent.py`, `prompt-agent.py`, `collect-agent.py`, `finish-agent.py`, `promote-run.py`, `retire-agents.py`, `rotate.py`, `ack-handoff.py`, and `reconcile.py` accept `--lock-timeout SECONDS`: finite positive, default 120; invalid values are usage errors (2), acquisition timeout is a precondition refusal (3). Forward the same bound to lock-taking child adapters. A child trying to reacquire a parent's held lock refuses within the bound; fallback does not make nested collection concurrent.
 
 After acquisition, `<run>/run.lock.owner` records `pid`, `script`, `node`, `since`, canonical `run`, `lock: "run.lock"`, `mode: "exclusive"`, nullable `epoch`, and unique `token`. Timeout diagnostics name the lock/run and mark this owner record **unverified** (missing/malformed records are unknown). Waiters never delete records, infer authority from PID/liveness, or break a lock. Owner-write failure refuses before protected mutation; cleanup removes only its own matching token while still locked. Kernel locking plus replayed holder/epoch checks remain authority. Diagnostics are atomically replaced without fsync; authority and changed-cache durability remain unchanged.
 
@@ -90,6 +92,7 @@ CLI `reconcile.py --run RUN` prints compact output by default:
 |---|---|
 | `promote(RUN, node=NODE, attempt=N, new_sha=SHA, repo=REPO, holder=H, lock_timeout=120)` | Always `{state, controller, event}`; successful auto-delivery adds `{delivery_branch, sha, created}`, skipped/refused delivery adds `{delivery_branch: None, delivery_note}`, CAS-blocked promotion has no delivery keys. |
 | `deliver_branch(RUN, repo=REPO, holder=H, branch="feature/change-slug", lock_timeout=120)` | `{delivery_branch, sha, created}`; create-only/idempotent at identical SHA, never moves an existing different ref. Omit branch for job-derived default. |
+| `promote-run.py --run RUN ...` | CLI wrapper for `promotion.promote` (`--node`, `--attempt`, `--new-sha`) or `promotion.deliver_branch` (`--deliver-only [--branch BRANCH]`) with holder flags and `--lock-timeout`. |
 | `recover_promotion(RUN, REPO, holder=H, lock_timeout=120)` | `None`; repairs interrupted promotion under lock. |
 
 Promotion's terminal success is not duplicated by a controller append. Ordered receipt evidence, primary/checked-out ref refusal, terminal delivery and retirement boundaries are fully described in [retire-promote](retire-promote.md).

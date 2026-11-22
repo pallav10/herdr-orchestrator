@@ -30,6 +30,8 @@ Run `python3 scripts/<name>.py --help` for flags; scripts print JSON, monitor pr
 Lock-taking entrypoints accept `--lock-timeout SECONDS`: finite positive, default 120; invalid input exits 2, acquisition timeout refuses with exit 3. See [locking contract](references/run-state-api.md#events-locking-and-dispatch).
 
 - `init-docs.py` — open/reuse the exact pane's gitignored session and canonical run binding.
+- `validate-graph.py` — offline graph validator/linter (`--graph-file FILE|-`): iterative Tarjan SCC cycles, concurrent ownership overlaps, topological waves, max parallelism (exit 0 valid, 3 invalid).
+- `accept-graph.py` — CLI wrapper for `ledger.accept_graph` (`--run`, `--graph-file FILE|-`, `--repo`, holder flags, `--lock-timeout`).
 - `dispatch-agent.py` — controller-facing Herdr dispatch, immutable intent, confirmed launch, ledger transition; `--cwd` is for read-only workers.
 - `spawn-agent.py` — low-level create/start/resume with persisted identity and launch sidecars.
 - `self-improve.py` — queue a detached improvement pane in a private skill clone, outside the reporting run.
@@ -39,6 +41,7 @@ Lock-taking entrypoints accept `--lock-timeout SECONDS`: finite positive, defaul
 - `collect-agent.py` — status/summaries and immutable receipts; stdout summary capped at 1,500 characters, `--full-summary` uncaps it.
 - `check-ownership.py` — classify slice changes; run mode derives the writer's merge-base, manifest mode accepts `--base`/`--since`.
 - `finish-agent.py` — collect, validate ownership/receipts, and record success or print integrator promotion call; optional `--since`/`--force`.
+- `promote-run.py` — CLI wrapper for `promotion.promote` (default) or `promotion.deliver_branch` (`--deliver-only [--branch BRANCH]`) with holder flags and `--lock-timeout`.
 - `retire-agents.py` — receipt-gated closure of orchestrator-created surfaces; optional `--collect`/`--force-unsettled` do not bypass run gates.
 - `rotate.py` — measured-context gate, lease drain, native quiescence, successor bootstrap and exact acknowledgment.
 - `ack-handoff.py` — successor session creation/recovery and exact nonce/holder lease transfer.
