@@ -48,6 +48,8 @@ Lock-taking entrypoints accept `--lock-timeout SECONDS`: finite positive, defaul
 - `retire-agents.py` — receipt-gated closure of orchestrator-created surfaces; optional `--collect`/`--force-unsettled` do not bypass run gates.
 - `rotate.py` — measured-context gate, lease drain, native quiescence, successor bootstrap and exact acknowledgment.
 - `ack-handoff.py` — successor session creation/recovery and exact nonce/holder lease transfer.
+- `inspect-run.py` — read-only replay and timeline inspector (`--run`, `--format json|text`, `--node`); reports node durations, unverified lock owner diagnostics, and concrete next actions.
+- `doctor.py` — read-only environment, git/gitignore, Herdr protocol (`--skip-herdr`), and OMP context extension preflight; exits 0 when no check fails, 3 on any failure.
 - `run_state.py` — controller Python facade; `load_state(run)` returns replayed state (see API reference).
 
 ## Orchestration loop

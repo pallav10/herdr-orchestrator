@@ -113,6 +113,8 @@ CLI `reconcile.py --run RUN` prints compact output by default:
 - `verdict.load_and_validate_verdict(attempt_dir)` validates optional `verdict.json` (`status` in `pass|rework|fail|blocked`, `summary`, `findings`, optional `rework_target`); absent files return `None`, malformed files raise `PreconditionError`. `finish-agent.py` includes `verdict` in output and records `failed` on `fail` or `rework` (`reason="verdict:rework"`, exposing `rework_target`).
 - `verdict.detect_rework_stagnation(events, node_id, *, window=3)` flags `stagnated: True` when the last `window` consecutive `failed`/`invalidated`/`retried` attempts repeat the same reason or findings hash.
 
+Read-only CLI helpers `inspect-run.py --run RUN [--format json|text] [--node NODE]` and `doctor.py [--repo REPO] [--docs-dir DOCS] [--skip-herdr]` never acquire `run.lock` or mutate ledgers/caches. `inspect-run.py` replays `events.jsonl` and reports run metadata, per-node durations/worker/worktree/artifact counts, unverified `run.lock.owner` diagnostics, and inferred `next_actions`. `doctor.py` checks Python/`fcntl`, Git repo/worktree/`.gitignore` rules, Herdr env/CLI/protocol reachability, and OMP context snapshot freshness (non-fatal unless rotating), exiting 0 if no check fails or 3 if any fails.
+
 ## Promotion and delivery shapes
 
 | Call | Returns |
