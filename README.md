@@ -23,7 +23,7 @@
 
 Running one coding agent is easy. Coordinating **five parallel agents** across a real repository without merge collisions, lost context, silent half-finished work, or runaway terminal panes is hard.
 
-**`herdr-orchestrator`** turns one [Herdr](https://github.com/herdr) controller pane into a **fault-tolerant, event-sourced orchestrator** for AI coding workers. Herdr provides the terminal workspaces and agent lifecycle; `herdr-orchestrator` adds the missing control plane:
+**`herdr-orchestrator`** turns one [Herdr](https://github.com/herdrdev/herdr) controller pane into a **fault-tolerant, event-sourced orchestrator** for AI coding workers. Herdr provides the terminal workspaces and agent lifecycle; `herdr-orchestrator` adds the missing control plane:
 
 - **Event-sourced run ledger** — `events.jsonl` is the sole execution authority; crash or rotate the controller at any point and replay exact state.
 - **Strict Git worktree isolation & ownership gates** — concurrent writers operate in separate worktrees with disjoint file ownership (`owns`), verified before anything is accepted.
