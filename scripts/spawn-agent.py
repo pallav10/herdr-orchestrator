@@ -799,11 +799,16 @@ def main() -> int:
         except OSError as exc:
             parser.error(f"cannot read --prompt-file: {exc}")
     if plan is not None:
+        writer = plan["writer"] or plan["integration"]
         if args.cwd is not None:
-            cwd_abs = str(Path(args.cwd).expanduser().resolve(strict=False))
-            if cwd_abs != plan["repo"] and not ioutil.is_worktree_of(cwd_abs, plan["repo"]):
-                parser.error(f"--cwd must resolve to accepted run repo {plan['repo']} or one of its worktrees")
-            args.cwd = plan["repo"] if (plan["writer"] or plan["integration"]) else cwd_abs
+            cwd = Path(args.cwd).expanduser().resolve()
+            cwd_abs = str(cwd)
+            if writer or args.branch or args.path or args.base:
+                if cwd_abs != plan["repo"] and not ioutil.is_worktree_of(cwd_abs, plan["repo"]):
+                    parser.error(f"--cwd must resolve to accepted run repo {plan['repo']} or one of its worktrees")
+            elif not cwd.is_dir():
+                parser.error(f"--cwd must be an existing directory: {cwd_abs}")
+            args.cwd = plan["repo"] if writer else cwd_abs
         else:
             args.cwd = plan["repo"]
         run, node, attempt = context
@@ -811,7 +816,7 @@ def main() -> int:
             prompt = artifacts.prepare_dispatch_prompt(run, node, attempt, prompt or "")
         except (ioutil.UsageError, ioutil.PreconditionError) as exc:
             parser.error(str(exc))
-        if plan["writer"] or plan["integration"]:
+        if writer:
             if args.base is not None and args.base != plan["base_sha"]:
                 parser.error(f"--base must equal graph.base_sha {plan['base_sha']}")
             args.base = plan["base_sha"]

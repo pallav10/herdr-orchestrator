@@ -645,8 +645,8 @@ def attempt_dir(run_dir: Path, node_id: str, attempt: int) -> Path:
     return resolved
 
 
-def _artifact_file_name(name: str, typ: str) -> str:
-    return "vcs.json" if typ == "vcs" else "integration.json" if typ == "integration" else f"{name}.json"
+def _artifact_file_name(typ: str) -> str:
+    return f"{typ}.json"
 
 
 def read_consumed_snapshot(run_dir: Path, node_id: str, attempt: int) -> list[dict[str, Any]]:
@@ -705,7 +705,7 @@ def _validate_artifact_records(run_dir: Path, graph: dict[str, Any], node_id: st
         path = Path(canonical_path(artifact["path"]))
         if not _relative_to(path, attempt_path):
             raise PreconditionError(f"artifact {name} path is not attempt-local")
-        expected_name = _artifact_file_name(name, specs[name])
+        expected_name = _artifact_file_name(specs[name])
         if path.name != expected_name:
             raise PreconditionError(f"artifact {name} path must be {expected_name}")
         if _file_hash(path) != artifact["hash"]:
@@ -963,7 +963,7 @@ def _promotion_artifacts(run_dir: Path, graph: dict[str, Any], node_id: str, att
 
     records: dict[str, dict[str, Any]] = {}
     for name, typ in specs.items():
-        path = attempt_path / _artifact_file_name(name, typ)
+        path = attempt_path / _artifact_file_name(typ)
         records[name] = {"name": name, "type": typ, "path": str(path), "hash": _file_hash(path)}
     return [records[name] for name in specs]
 

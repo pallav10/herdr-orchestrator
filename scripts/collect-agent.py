@@ -222,9 +222,8 @@ def declared_outputs(run: Path, node: str) -> list[dict[str, Any]]:
 def declared_output(outputs: list[dict[str, Any]], output_type: str) -> tuple[str, str]:
     for out in outputs:
         name = out.get("name")
-        typ = out.get("type")
-        if name == output_type or typ == output_type:
-            return (name if isinstance(name, str) and name else output_type, typ if isinstance(typ, str) and typ else output_type)
+        if out.get("type") == output_type:
+            return (name if isinstance(name, str) and name else output_type), output_type
     return output_type, output_type
 
 
@@ -336,7 +335,7 @@ def attach_artifacts(agent: dict[str, Any], context: tuple[Path, str, str], iden
     integration_path = attempt_dir / "integration.json"
     ownership = load_json(ownership_path) if ownership_path.is_file() else None
     writer = vcs_path.is_file() or identity_is_writer(identity) or ownership_has_paths(ownership)
-    needs_integration = declares_output(outputs, "integration", match_name=True) or integration_path.is_file()
+    needs_integration = declares_output(outputs, "integration") or integration_path.is_file()
     if writer or needs_integration:
         require_writer_identity(identity)
         run_doc = ledger.load_run(run)
@@ -392,9 +391,17 @@ def attach_artifacts(agent: dict[str, Any], context: tuple[Path, str, str], iden
                 raise ioutil.PreconditionError("summary.json already exists")
         except OSError as exc:
             raise ioutil.PreconditionError(f"cannot write summary.json: {exc}") from exc
-    artifacts = [artifact_row(outputs, "summary", summary_path), *extra_artifacts]
+    summary_names = [out["name"] for out in outputs if out.get("type") == "summary"]
+    if not summary_names and not any(out.get("name") == "summary" for out in outputs):
+        summary_names = ["summary"]
+    summary_hash = ioutil.sha256_file(summary_path)
+    summary_file = str(summary_path.resolve())
+    artifacts = [
+        {"name": name, "output": name, "type": "summary", "path": summary_file, "hash": summary_hash}
+        for name in summary_names
+    ] + extra_artifacts
 
-    return {**agent, "status": agent["state"], "summary_hash": artifacts[0]["hash"], "artifacts": artifacts}
+    return {**agent, "status": agent["state"], "summary_hash": summary_hash, "artifacts": artifacts}
 
 
 # Empirically verified from infra session JSONL on 2026-08-11:
