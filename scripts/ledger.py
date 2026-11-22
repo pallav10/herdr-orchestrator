@@ -1049,7 +1049,11 @@ def _pending_promotion_intent(events: list[dict[str, Any]], node_id: str, attemp
 
 
 def _normalize_dispatch_model(snap: dict[str, Any], event: dict[str, Any], node_id: str, graph: dict[str, Any]) -> None:
-    model = validate_model(event.get("model"))
+    plan = graph.get("nodes", {}).get(node_id, {}) or {}
+    raw_model = event.get("model")
+    if raw_model is None and plan.get("executor") == "script":
+        raw_model = {key: None for key in MODEL_KEYS}
+    model = validate_model(raw_model)
     event["model"] = model
     prior = None
     authorized = None

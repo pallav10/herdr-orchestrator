@@ -8,7 +8,7 @@ from ioutil import PreconditionError, UsageError
 from ownership import owns_overlap
 
 SCHEMA_VERSION = 1
-EXECUTORS = frozenset({"task", "workflow", "herdr-agent", "pane"})
+EXECUTORS = frozenset({"task", "workflow", "herdr-agent", "pane", "script"})
 STATES = frozenset({"planned", "ready", "running", "blocked", "succeeded", "failed", "interrupted", "skipped", "invalidated"})
 OUTPUT_TYPES = frozenset({"summary", "vcs", "integration"})
 RETRY_ON = frozenset({"failed", "interrupted", "invalidated"})
@@ -162,6 +162,23 @@ def validate_graph(graph: dict[str, Any]) -> None:
             handle = node.get("handle")
             if not isinstance(handle, dict) or not isinstance(handle.get("name"), str) or not handle["name"]:
                 raise PreconditionError(f"pane node {node_id} missing a stored handle name")
+        if node.get("executor") == "script":
+            cmd = node.get("command")
+            if isinstance(cmd, str):
+                if not cmd.strip():
+                    raise PreconditionError(f"script node {node_id} command must be non-empty")
+            elif isinstance(cmd, list):
+                if not cmd or not all(isinstance(part, str) and part for part in cmd):
+                    raise PreconditionError(f"script node {node_id} command list must contain non-empty strings")
+            else:
+                raise PreconditionError(f"script node {node_id} missing command (str or list[str])")
+            timeout_sec = node.get("timeout_sec")
+            if timeout_sec is not None:
+                if isinstance(timeout_sec, bool) or not isinstance(timeout_sec, int) or timeout_sec < 1:
+                    raise PreconditionError(f"script node {node_id}.timeout_sec must be a positive integer")
+            cwd = node.get("cwd")
+            if cwd is not None and (not isinstance(cwd, str) or not cwd.strip()):
+                raise PreconditionError(f"script node {node_id}.cwd must be a non-empty string")
         owns = _as_list(node.get("owns"), f"{node_id}.owns")
         if any(not isinstance(item, str) or not item for item in owns):
             raise PreconditionError(f"node {node_id}.owns entries must be non-empty strings")
