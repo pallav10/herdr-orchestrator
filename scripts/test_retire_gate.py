@@ -116,6 +116,7 @@ class RetireGateTest(unittest.TestCase):
                     "id": "D", "executor": "herdr-agent", "depends_on": ["B"],
                     "inputs": d_inputs,
                     "outputs": [{"name": "integration", "type": "integration"}, {"name": "vcs", "type": "vcs"}],
+                    "owns": ["**"],
                     "retry": {"max_attempts": 2, "on": ["invalidated"]},
                 },
             },
@@ -320,6 +321,7 @@ class RetireGateTest(unittest.TestCase):
                 "depends_on": ["B"],
                 "inputs": inputs,
                 "outputs": [{"name": "integration", "type": "integration"}, {"name": "vcs", "type": "vcs"}],
+                "owns": ["**"],
                 "retry": {"max_attempts": 2, "on": ["invalidated"]},
             }
         return {"schema_version": 1, "nodes": nodes}
