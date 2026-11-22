@@ -1,0 +1,750 @@
+#!/usr/bin/env python3
+"""Unified CLI front-door for herdr-orchestrator with auto-context and `ho next` loop.
+
+Subcommands:
+  init       Open/reuse pane session and canonical run binding
+  accept     Normalize and accept a task graph (file or stdin)
+  next       Inspect state and emit exact copy-paste-ready next commands
+  dispatch   Dispatch a ready node with auto-context and auto-epoch
+  monitor    Monitor all currently running managed agents
+  finish     Finish a running node attempt (auto-resolves attempt)
+  promote    Promote an integrator node (auto-resolves new_sha from receipts)
+  retire     Retire all eligible terminal orchestrator agents
+  status     Compact run status + next_command
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+from typing import Any
+
+import cli_common
+import graph_model
+import ioutil
+import ledger
+import promotion
+import scheduler
+import session_docs
+from herdr_cli import herdr
+
+CLI_EXTRA_CODES = {RuntimeError: 1}
+HO_SCRIPT = Path(__file__).resolve()
+SCRIPTS = cli_common.SCRIPTS
+
+SCHEMA_EXAMPLE = (
+    '{"schema_version": 1, "nodes": {"A": {"id": "A", "executor": "herdr-agent", '
+    '"outputs": [{"name": "summary", "type": "summary"}]}}}'
+)
+
+
+def _cmd_str(parts: list[str]) -> str:
+    return " ".join(shlex.quote(p) for p in parts)
+
+
+def _ho_cmd(*args: str) -> str:
+    return _cmd_str(["python3", str(HO_SCRIPT), *args])
+
+
+def _find_docs_root(explicit: str | None) -> Path | None:
+    if explicit:
+        return Path(ioutil.canonical_path(explicit))
+    cwd = Path.cwd().resolve()
+    for candidate in (cwd, *cwd.parents):
+        docs = candidate / "docs"
+        if (docs / session_docs.SESSIONS_DIR).is_dir():
+            return docs
+        if (candidate / ".git").exists():
+            return docs if docs.is_dir() else None
+    return None
+
+
+def _discover_session_for_pane(docs_root: Path, workspace: str, pane: str) -> tuple[Path, Path]:
+    sessions = session_docs.ordered_sessions(docs_root)
+    matches: list[tuple[Path, Path]] = []
+    for session_dir, meta in sessions:
+        if meta.get("workspace") == workspace and meta.get("pane") == pane:
+            run_raw = meta.get("run")
+            if isinstance(run_raw, str) and run_raw.strip():
+                matches.append((Path(ioutil.canonical_path(session_dir)), Path(ioutil.canonical_path(run_raw))))
+    if not matches:
+        raise ioutil.PreconditionError(
+            f"no session under {docs_root} matches pane ({workspace}, {pane}); "
+            f"run `{_ho_cmd('init', '--dir', str(docs_root), '--job', '<job>')}` or pass --run/--session"
+        )
+    return matches[-1]
+
+
+def _resolve_context(
+    args: argparse.Namespace,
+    *,
+    require_run: bool = True,
+    require_holder: bool = True,
+    require_epoch: bool = False,
+) -> dict[str, Any]:
+    workspace = getattr(args, "holder_workspace", None) or os.environ.get("HERDR_WORKSPACE_ID")
+    pane = getattr(args, "holder_pane", None) or os.environ.get("HERDR_PANE_ID")
+    session_raw = getattr(args, "session", None)
+    run_raw = getattr(args, "run", None)
+    docs_raw = getattr(args, "docs", None)
+
+    session_path: Path | None = Path(ioutil.canonical_path(session_raw)) if session_raw else None
+    run_path: Path | None = Path(ioutil.canonical_path(run_raw)) if run_raw else None
+
+    if session_path is not None and run_path is None:
+        run_path = session_docs.session_run(session_path)
+
+    if session_path is None and (require_holder or run_path is None):
+        docs_root = _find_docs_root(docs_raw)
+        if docs_root is not None and workspace and pane:
+            try:
+                disc_session, disc_run = _discover_session_for_pane(docs_root, workspace, pane)
+                if run_path is None or run_path == disc_run:
+                    session_path = disc_session
+                    if run_path is None:
+                        run_path = disc_run
+                else:
+                    # Explicit --run differs from newest pane session; search all matching pane sessions for that run
+                    for sdir, meta in reversed(session_docs.ordered_sessions(docs_root)):
+                        if meta.get("workspace") == workspace and meta.get("pane") == pane and meta.get("run") == str(run_path):
+                            session_path = Path(ioutil.canonical_path(sdir))
+                            break
+            except ioutil.PreconditionError:
+                if run_path is None:
+                    raise
+
+    if run_path is None and require_run:
+        hint_dir = str(Path.cwd().resolve() / "docs")
+        raise ioutil.PreconditionError(
+            f"cannot resolve active run: set HERDR_WORKSPACE_ID/HERDR_PANE_ID or pass --run/--session, "
+            f"or initialize with `{_ho_cmd('init', '--dir', hint_dir, '--job', '<job>')}`"
+        )
+
+    snap: dict[str, Any] | None = None
+    if run_path is not None and (run_path / "run.json").is_file():
+        snap = ledger.replay(run_path)
+        ctrl = snap.get("controller") if isinstance(snap.get("controller"), dict) else {}
+        if session_path is None and isinstance(ctrl.get("session"), str) and ctrl["session"]:
+            if not workspace or ctrl.get("workspace") == workspace:
+                if not pane or ctrl.get("pane") == pane:
+                    session_path = Path(ioutil.canonical_path(ctrl["session"]))
+        if workspace is None and isinstance(ctrl.get("workspace"), str) and ctrl["workspace"]:
+            workspace = ctrl["workspace"]
+        if pane is None and isinstance(ctrl.get("pane"), str) and ctrl["pane"]:
+            pane = ctrl["pane"]
+
+    holder: dict[str, str] | None = None
+    if workspace and pane and session_path is not None:
+        holder = {"workspace": workspace, "pane": pane, "session": str(session_path)}
+    elif require_holder:
+        missing = [
+            flag
+            for flag, val in (
+                ("--holder-workspace (or HERDR_WORKSPACE_ID)", workspace),
+                ("--holder-pane (or HERDR_PANE_ID)", pane),
+                ("--session", session_path),
+            )
+            if not val
+        ]
+        raise ioutil.PreconditionError(
+            f"cannot resolve controller holder (missing {', '.join(missing)}); "
+            f"pass explicit flags or run `{_ho_cmd('init', '--dir', 'docs', '--job', '<job>')}`"
+        )
+
+    epoch: int | None = getattr(args, "epoch", None)
+    if epoch is None and snap is not None:
+        ctrl = snap.get("controller") if isinstance(snap.get("controller"), dict) else {}
+        if isinstance(ctrl.get("epoch"), int):
+            epoch = ctrl["epoch"]
+    if require_epoch and epoch is None:
+        raise ioutil.PreconditionError("cannot resolve controller epoch; pass --epoch or ensure run is initialized")
+
+    return {
+        "run": run_path,
+        "session": session_path,
+        "workspace": workspace,
+        "pane": pane,
+        "holder": holder,
+        "epoch": epoch,
+        "snap": snap,
+    }
+
+
+def _normalize_graph(raw: Any) -> dict[str, Any]:
+    """Forgiving, unambiguous shorthand normalization before strict graph_model.validate_graph."""
+    if not isinstance(raw, dict):
+        raise ioutil.PreconditionError(f"graph must be a JSON object. Valid example: {SCHEMA_EXAMPLE}")
+    graph = dict(raw)
+    if "schema_version" not in graph:
+        graph["schema_version"] = graph_model.SCHEMA_VERSION
+    nodes = graph.get("nodes")
+    if isinstance(nodes, list):
+        mapped: dict[str, Any] = {}
+        for idx, item in enumerate(nodes):
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
+                raise ioutil.PreconditionError(
+                    f"graph.nodes[{idx}] must be an object with non-empty string 'id'. Valid example: {SCHEMA_EXAMPLE}"
+                )
+            nid = item["id"]
+            if nid in mapped:
+                raise ioutil.PreconditionError(f"duplicate node id {nid!r} in graph.nodes list")
+            mapped[nid] = dict(item)
+        graph["nodes"] = mapped
+    elif isinstance(nodes, dict):
+        normalized_nodes: dict[str, Any] = {}
+        for key, val in nodes.items():
+            if isinstance(val, dict) and "id" not in val:
+                node_copy = dict(val)
+                node_copy["id"] = key
+                normalized_nodes[key] = node_copy
+            else:
+                normalized_nodes[key] = val
+        graph["nodes"] = normalized_nodes
+    return graph
+
+
+def _git_repo_from_path(path: Path) -> str:
+    for candidate in (path, *path.parents):
+        if (candidate / ".git").exists():
+            return ioutil.canonical_path(candidate)
+    raise ioutil.PreconditionError(f"cannot determine git repository from {path}; pass --repo PATH")
+
+
+def _live_agents_by_name() -> dict[str, dict[str, Any]] | None:
+    """Best-effort live Herdr agent lookup; returns None if herdr is unavailable."""
+    try:
+        payload = herdr("agent", "list")
+        agents = payload.get("result", {}).get("agents", [])
+        if not isinstance(agents, list):
+            return None
+        return {
+            a["name"]: a
+            for a in agents
+            if isinstance(a, dict) and isinstance(a.get("name"), str) and a["name"]
+        }
+    except Exception:
+        return None
+
+
+def _agent_target_for_node(run_path: Path, node_id: str, node: dict[str, Any]) -> str | None:
+    attempt = int(node.get("attempt") or 0)
+    if attempt >= 1:
+        ident_path = ledger.attempt_dir(run_path, node_id, attempt) / "dispatch-identity.json"
+        if ident_path.is_file():
+            try:
+                ident = json.loads(ident_path.read_text(encoding="utf-8"))
+                if isinstance(ident, dict):
+                    wid = ident.get("worker_id") or ident.get("agent")
+                    if isinstance(wid, str) and wid:
+                        return wid
+            except (OSError, json.JSONDecodeError):
+                pass
+    handle = node.get("handle")
+    if isinstance(handle, dict):
+        for key in ("worker_id", "agent", "name"):
+            val = handle.get(key)
+            if isinstance(val, str) and val:
+                return val
+    return None
+
+
+def _needs_promotion(run_path: Path, graph: dict[str, Any], node_id: str, node: dict[str, Any]) -> bool:
+    if node.get("state") != "running":
+        return False
+    plan = (graph.get("nodes") or {}).get(node_id) or {}
+    if not graph_model.declares_output(plan.get("outputs") or [], "integration"):
+        return False
+    attempt = int(node.get("attempt") or 0)
+    if attempt < 1:
+        return False
+    adir = ledger.attempt_dir(run_path, node_id, attempt)
+    return (adir / "integration.json").is_file() and (adir / "vcs.json").is_file()
+
+
+def _ready_nodes_from_state(state: dict[str, Any], graph: dict[str, Any]) -> list[str]:
+    nodes = state.get("nodes") if isinstance(state.get("nodes"), dict) else {}
+    graph_nodes = graph.get("nodes") if isinstance(graph.get("nodes"), dict) else {}
+    ready: list[str] = []
+    for nid, nstate in nodes.items():
+        if not isinstance(nstate, dict):
+            continue
+        st = nstate.get("state")
+        if st == "ready":
+            ready.append(nid)
+        elif st == "planned":
+            deps = graph_nodes.get(nid, {}).get("depends_on") or []
+            if all((nodes.get(d) or {}).get("state") in {"succeeded", "skipped"} for d in deps):
+                ready.append(nid)
+    return sorted(ready)
+
+
+def _retirable_targets(run_path: Path, state: dict[str, Any], graph: dict[str, Any], live: dict[str, dict[str, Any]] | None) -> list[str]:
+    if not live:
+        return []
+    nodes = state.get("nodes") if isinstance(state.get("nodes"), dict) else {}
+    graph_nodes = graph.get("nodes") if isinstance(graph.get("nodes"), dict) else {}
+    targets: list[str] = []
+    for nid, nstate in nodes.items():
+        if not isinstance(nstate, dict):
+            continue
+        if nstate.get("state") not in graph_model.ATTEMPT_TERMINAL:
+            continue
+        plan = graph_nodes.get(nid) or {}
+        if plan.get("executor") != "herdr-agent":
+            continue
+        target = _agent_target_for_node(run_path, nid, nstate)
+        if target and target in live and target not in targets:
+            targets.append(target)
+    return sorted(targets)
+
+
+def _compute_next(
+    run_path: Path | None,
+    snap: dict[str, Any] | None,
+    *,
+    live: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if run_path is None or snap is None:
+        docs_dir = str(Path.cwd().resolve() / "docs")
+        return {
+            "phase": "init",
+            "summary": "No active run bound to this pane. Initialize a session and run first.",
+            "nodes": {},
+            "commands": [_ho_cmd("init", "--dir", docs_dir, "--job", "<job-name>")],
+        }
+
+    run_flag = ["--run", str(run_path)]
+    graph = ledger.load_graph(run_path)
+    state = snap.get("state") if isinstance(snap.get("state"), dict) else {}
+    nodes = state.get("nodes") if isinstance(state.get("nodes"), dict) else {}
+    compact_nodes = {nid: (n.get("state") if isinstance(n, dict) else "unknown") for nid, n in sorted(nodes.items())}
+
+    if not isinstance(graph, dict) or not graph.get("nodes"):
+        return {
+            "phase": "accept_graph",
+            "summary": "Run initialized without an accepted graph. Write graph.json and accept it.",
+            "nodes": compact_nodes,
+            "commands": [_ho_cmd("accept", "--graph", "<graph.json>", *run_flag)],
+        }
+
+    # 1. Integrator promotion ready (integration.json + vcs.json already collected on running integrator)
+    promotable = [nid for nid, n in sorted(nodes.items()) if isinstance(n, dict) and _needs_promotion(run_path, graph, nid, n)]
+    if promotable:
+        return {
+            "phase": "promote",
+            "summary": f"Integrator ready for promotion: {', '.join(promotable)}.",
+            "nodes": compact_nodes,
+            "commands": [_ho_cmd("promote", nid, *run_flag) for nid in promotable],
+        }
+
+    # 2. Running nodes: check if settled (finish) or still active (monitor)
+    running = [(nid, n) for nid, n in sorted(nodes.items()) if isinstance(n, dict) and n.get("state") == "running"]
+    if running:
+        settled_nodes: list[str] = []
+        active_nodes: list[str] = []
+        for nid, n in running:
+            target = _agent_target_for_node(run_path, nid, n)
+            if live is not None and target and target in live:
+                agent_status = live[target].get("agent_status") or live[target].get("state")
+                if agent_status in graph_model.SETTLED:
+                    settled_nodes.append(nid)
+                else:
+                    active_nodes.append(nid)
+            else:
+                active_nodes.append(nid)
+
+        if settled_nodes:
+            return {
+                "phase": "finish",
+                "summary": f"Settled worker(s) ready to collect and finish: {', '.join(settled_nodes)}.",
+                "nodes": compact_nodes,
+                "commands": [_ho_cmd("finish", nid, *run_flag) for nid in settled_nodes],
+            }
+        return {
+            "phase": "monitor",
+            "summary": f"Waiting on {len(active_nodes)} running node(s): {', '.join(active_nodes)}.",
+            "nodes": compact_nodes,
+            "commands": [_ho_cmd("monitor", *run_flag)],
+        }
+
+    # 3. Ready nodes to dispatch
+    ready = _ready_nodes_from_state(state, graph)
+    if ready:
+        return {
+            "phase": "dispatch",
+            "summary": f"{len(ready)} ready node(s) to dispatch: {', '.join(ready)}.",
+            "nodes": compact_nodes,
+            "commands": [_ho_cmd("dispatch", nid, "--prompt-file", f"<prompt-{nid}.md>", *run_flag) for nid in ready],
+        }
+
+    # 4. Blocked / failed / interrupted nodes
+    blocked = [nid for nid, n in sorted(nodes.items()) if isinstance(n, dict) and n.get("state") in {"blocked", "failed", "interrupted"}]
+    if blocked:
+        return {
+            "phase": "blocked",
+            "summary": f"Node(s) need attention ({', '.join(blocked)}). Inspect status or reconcile.",
+            "nodes": compact_nodes,
+            "commands": [_ho_cmd("status", *run_flag)],
+        }
+
+    # 5. All terminal-good: check if managed workers still need retirement
+    retirable = _retirable_targets(run_path, state, graph, live)
+    if retirable:
+        return {
+            "phase": "retire",
+            "summary": f"All graph nodes complete. {len(retirable)} orchestrator agent(s) ready to retire.",
+            "nodes": compact_nodes,
+            "commands": [_ho_cmd("retire", "--all", *run_flag)],
+        }
+
+    return {
+        "phase": "done",
+        "summary": "All graph nodes completed and no managed workers remain live.",
+        "nodes": compact_nodes,
+        "commands": [],
+    }
+
+
+def _cmd_init(args: argparse.Namespace) -> int:
+    argv = [sys.executable, str(SCRIPTS / "init-docs.py"), "--dir", args.dir, "--job", args.job]
+    if args.new:
+        argv.append("--new")
+    if args.run:
+        argv += ["--run", args.run]
+    for p in args.pane or []:
+        argv += ["--pane", p]
+    argv += ["--lock-timeout", str(args.lock_timeout)]
+    result = cli_common.run_child(argv, "init-docs.py")
+    run_path = result.get("run")
+    next_cmd = _ho_cmd("accept", "--graph", "<graph.json>", "--run", run_path) if isinstance(run_path, str) else _ho_cmd("next")
+    print(json.dumps({**result, "next_command": next_cmd}))
+    return 0
+
+
+def _cmd_accept(args: argparse.Namespace) -> int:
+    ctx = _resolve_context(args, require_run=True, require_holder=True)
+    run_path: Path = ctx["run"]
+    if args.graph == "-":
+        raw_text = sys.stdin.read()
+    else:
+        try:
+            raw_text = Path(args.graph).read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ioutil.UsageError(f"cannot read --graph {args.graph}: {exc}") from exc
+    try:
+        raw_obj = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        raise ioutil.UsageError(f"invalid JSON in graph: {exc}. Valid example: {SCHEMA_EXAMPLE}") from exc
+
+    normalized = _normalize_graph(raw_obj)
+    try:
+        graph_model.validate_graph(normalized)
+    except ioutil.PreconditionError as exc:
+        raise ioutil.PreconditionError(f"{exc}. Valid schema example: {SCHEMA_EXAMPLE}") from exc
+
+    repo = args.repo
+    if not repo:
+        run_doc = ledger.load_run(run_path)
+        repo = run_doc.get("repo") or _git_repo_from_path(run_path)
+    accepted = ledger.accept_graph(run_path, normalized, repo=repo, holder=ctx["holder"], lock_timeout=args.lock_timeout)
+    snap = ledger.replay(run_path)
+    nxt = _compute_next(run_path, snap, live=None)
+    print(json.dumps({
+        "run": str(run_path),
+        "base_sha": accepted.get("base_sha"),
+        "promotion_ref": accepted.get("promotion_ref"),
+        "nodes": sorted((accepted.get("nodes") or {}).keys()),
+        "next_command": nxt["commands"][0] if nxt["commands"] else _ho_cmd("next", "--run", str(run_path)),
+    }))
+    return 0
+
+
+def _cmd_next(args: argparse.Namespace) -> int:
+    try:
+        ctx = _resolve_context(args, require_run=True, require_holder=args.reconcile)
+    except ioutil.PreconditionError:
+        if args.run or args.session or args.reconcile:
+            raise
+        print(json.dumps(_compute_next(None, None)))
+        return 0
+
+    run_path: Path = ctx["run"]
+    if args.reconcile:
+        scheduler.reconcile(run_path, holder=ctx["holder"], lock_timeout=args.lock_timeout)
+    snap = ledger.replay(run_path)
+    live = _live_agents_by_name()
+    print(json.dumps(_compute_next(run_path, snap, live=live)))
+    return 0
+
+
+def _cmd_dispatch(args: argparse.Namespace) -> int:
+    ctx = _resolve_context(args, require_run=True, require_holder=True, require_epoch=True)
+    argv = [
+        sys.executable,
+        str(SCRIPTS / "dispatch-agent.py"),
+        "--run", str(ctx["run"]),
+        "--node", args.node,
+        "--session", str(ctx["session"]),
+        "--holder-workspace", ctx["workspace"],
+        "--holder-pane", ctx["pane"],
+        "--epoch", str(ctx["epoch"]),
+        "--lock-timeout", str(args.lock_timeout),
+    ]
+    if args.prompt_file:
+        argv += ["--prompt-file", args.prompt_file]
+    if args.prompt:
+        argv += ["--prompt", args.prompt]
+    if args.cwd:
+        argv += ["--cwd", args.cwd]
+    if args.model_role:
+        argv += ["--model-role", args.model_role]
+    if args.model:
+        argv += ["--model", args.model]
+    if args.name:
+        argv += ["--name", args.name]
+    result = cli_common.run_child(argv, "dispatch-agent.py")
+    print(json.dumps({**result, "next_command": _ho_cmd("next", "--run", str(ctx["run"]))}))
+    return 0
+
+
+def _cmd_monitor(args: argparse.Namespace) -> int:
+    ctx = _resolve_context(args, require_run=True, require_holder=False)
+    run_path: Path = ctx["run"]
+    snap = ctx["snap"] or ledger.replay(run_path)
+    nodes = (snap.get("state") or {}).get("nodes") or {}
+    targets: list[str] = []
+    for nid, nstate in sorted(nodes.items()):
+        if isinstance(nstate, dict) and nstate.get("state") == "running":
+            target = _agent_target_for_node(run_path, nid, nstate)
+            if target and target not in targets:
+                targets.append(target)
+    if not targets:
+        raise ioutil.PreconditionError("no running managed agents to monitor")
+    argv = [sys.executable, str(SCRIPTS / "monitor-agents.py"), *targets]
+    if args.timeout is not None:
+        argv += ["--timeout", str(args.timeout)]
+    if ctx["pane"]:
+        argv += ["--notify-pane", ctx["pane"], "--label", run_path.name]
+    proc = subprocess.run(argv)
+    return proc.returncode
+
+
+def _cmd_finish(args: argparse.Namespace) -> int:
+    ctx = _resolve_context(args, require_run=True, require_holder=True)
+    run_path: Path = ctx["run"]
+    snap = ctx["snap"] or ledger.replay(run_path)
+    attempt = args.attempt
+    if attempt is None:
+        node = ((snap.get("state") or {}).get("nodes") or {}).get(args.node)
+        if not isinstance(node, dict) or not int(node.get("attempt") or 0):
+            raise ioutil.PreconditionError(f"cannot determine active attempt for node {args.node}; pass --attempt")
+        attempt = int(node["attempt"])
+    argv = [
+        sys.executable,
+        str(SCRIPTS / "finish-agent.py"),
+        "--run", str(run_path),
+        "--node", args.node,
+        "--attempt", str(attempt),
+        "--session", str(ctx["session"]),
+        "--holder-workspace", ctx["workspace"],
+        "--holder-pane", ctx["pane"],
+        "--lock-timeout", str(args.lock_timeout),
+    ]
+    if args.force:
+        argv.append("--force")
+    if args.since:
+        argv += ["--since", args.since]
+    result = cli_common.run_child(argv, "finish-agent.py")
+    next_cmd = _ho_cmd("promote", args.node, "--run", str(run_path)) if result.get("promote") else _ho_cmd("next", "--run", str(run_path))
+    print(json.dumps({**result, "next_command": next_cmd}))
+    return 0
+
+
+def _resolve_promotion_sha(attempt_dir: Path) -> str:
+    for filename, keys in (("integration.json", ("head", "commit")), ("vcs.json", ("head", "commit"))):
+        path = attempt_dir / filename
+        if not path.is_file():
+            continue
+        data = ioutil.load_json(path)
+        if not isinstance(data, dict):
+            continue
+        for key in keys:
+            val = data.get(key)
+            if isinstance(val, str) and val:
+                return val
+        res = data.get("result")
+        if isinstance(res, dict) and isinstance(res.get("sha"), str) and res["sha"]:
+            return res["sha"]
+    raise ioutil.PreconditionError(
+        f"cannot resolve new_sha from {attempt_dir / 'integration.json'} or {attempt_dir / 'vcs.json'}; run `ho finish` first"
+    )
+
+
+def _cmd_promote(args: argparse.Namespace) -> int:
+    ctx = _resolve_context(args, require_run=True, require_holder=True)
+    run_path: Path = ctx["run"]
+    snap = ctx["snap"] or ledger.replay(run_path)
+    attempt = args.attempt
+    if attempt is None:
+        node = ((snap.get("state") or {}).get("nodes") or {}).get(args.node)
+        if not isinstance(node, dict) or not int(node.get("attempt") or 0):
+            raise ioutil.PreconditionError(f"cannot determine attempt for node {args.node}; pass --attempt")
+        attempt = int(node["attempt"])
+    adir = ledger.attempt_dir(run_path, args.node, attempt)
+    new_sha = _resolve_promotion_sha(adir)
+    repo = args.repo or ledger.load_run(run_path).get("repo") or _git_repo_from_path(run_path)
+    result = promotion.promote(
+        run_path,
+        node=args.node,
+        attempt=attempt,
+        new_sha=new_sha,
+        repo=repo,
+        holder=ctx["holder"],
+        lock_timeout=args.lock_timeout,
+    )
+    print(json.dumps({
+        "node": args.node,
+        "attempt": attempt,
+        "new_sha": new_sha,
+        "delivery_branch": result.get("delivery_branch"),
+        "delivery_note": result.get("delivery_note"),
+        "state": (result.get("state") or {}).get("nodes", {}).get(args.node, {}).get("state"),
+        "next_command": _ho_cmd("next", "--run", str(run_path)),
+    }))
+    return 0
+
+
+def _cmd_retire(args: argparse.Namespace) -> int:
+    ctx = _resolve_context(args, require_run=True, require_holder=True)
+    run_path: Path = ctx["run"]
+    snap = ctx["snap"] or ledger.replay(run_path)
+    graph = ledger.load_graph(run_path) or {}
+    live = _live_agents_by_name()
+    targets = _retirable_targets(run_path, snap.get("state") or {}, graph, live)
+    if not targets:
+        print(json.dumps({"retired": [], "refused": [], "next_command": _ho_cmd("next", "--run", str(run_path))}))
+        return 0
+    argv = [
+        sys.executable,
+        str(SCRIPTS / "retire-agents.py"),
+        *targets,
+        "--run", str(run_path),
+        "--session", str(ctx["session"]),
+        "--holder-workspace", ctx["workspace"],
+        "--holder-pane", ctx["pane"],
+        "--lock-timeout", str(args.lock_timeout),
+    ]
+    result = cli_common.run_child(argv, "retire-agents.py")
+    print(json.dumps({**result, "next_command": _ho_cmd("next", "--run", str(run_path))}))
+    return 0
+
+
+def _cmd_status(args: argparse.Namespace) -> int:
+    ctx = _resolve_context(args, require_run=True, require_holder=False)
+    run_path: Path = ctx["run"]
+    snap = ctx["snap"] or ledger.replay(run_path)
+    live = _live_agents_by_name()
+    nxt = _compute_next(run_path, snap, live=live)
+    ctrl = snap.get("controller") if isinstance(snap.get("controller"), dict) else {}
+    print(json.dumps({
+        "run": str(run_path),
+        "epoch": ctrl.get("epoch"),
+        "lease": ctrl.get("lease_state"),
+        "phase": nxt["phase"],
+        "nodes": nxt["nodes"],
+        "next_command": nxt["commands"][0] if nxt["commands"] else None,
+    }))
+    return 0
+
+
+def _add_context_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--run", default=None, help="canonical run directory (auto-discovered if omitted)")
+    parser.add_argument("--session", default=None, help="canonical session directory (auto-discovered if omitted)")
+    parser.add_argument("--docs", default=None, help="docs root for session auto-discovery")
+    parser.add_argument("--holder-workspace", default=None, help="defaults to HERDR_WORKSPACE_ID")
+    parser.add_argument("--holder-pane", default=None, help="defaults to HERDR_PANE_ID")
+    cli_common.add_lock_timeout_arg(parser)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="ho.py", description="Unified CLI for herdr-orchestrator.")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_init = sub.add_parser("init", help="Open/reuse pane session and canonical run binding")
+    p_init.add_argument("--dir", required=True, help="docs root directory")
+    p_init.add_argument("--job", required=True, help="job name")
+    p_init.add_argument("--new", action="store_true")
+    p_init.add_argument("--run", default=None)
+    p_init.add_argument("--pane", action="append", default=None)
+    cli_common.add_lock_timeout_arg(p_init)
+    p_init.set_defaults(func=_cmd_init)
+
+    p_accept = sub.add_parser("accept", help="Normalize and accept a task graph")
+    p_accept.add_argument("--graph", required=True, help="graph JSON file path or '-' for stdin")
+    p_accept.add_argument("--repo", default=None, help="target git repo path (auto-detected if omitted)")
+    _add_context_args(p_accept)
+    p_accept.set_defaults(func=_cmd_accept)
+
+    p_next = sub.add_parser("next", help="Inspect state and emit exact copy-paste-ready next commands")
+    p_next.add_argument("--reconcile", action="store_true", help="run holder-authorized reconcile before computing next")
+    _add_context_args(p_next)
+    p_next.set_defaults(func=_cmd_next)
+
+    p_dispatch = sub.add_parser("dispatch", help="Dispatch a ready node with auto-context & auto-epoch")
+    p_dispatch.add_argument("node", help="graph node id")
+    prompts = p_dispatch.add_mutually_exclusive_group(required=True)
+    prompts.add_argument("--prompt-file", default=None)
+    prompts.add_argument("--prompt", default=None)
+    p_dispatch.add_argument("--cwd", default=None)
+    p_dispatch.add_argument("--model-role", default=None)
+    p_dispatch.add_argument("--model", default=None)
+    p_dispatch.add_argument("--name", default=None)
+    p_dispatch.add_argument("--epoch", type=int, default=None)
+    _add_context_args(p_dispatch)
+    p_dispatch.set_defaults(func=_cmd_dispatch)
+
+    p_monitor = sub.add_parser("monitor", help="Monitor all currently running managed agents")
+    p_monitor.add_argument("--timeout", type=float, default=None)
+    _add_context_args(p_monitor)
+    p_monitor.set_defaults(func=_cmd_monitor)
+
+    p_finish = sub.add_parser("finish", help="Finish a running node attempt (auto-resolves attempt)")
+    p_finish.add_argument("node", help="graph node id")
+    p_finish.add_argument("--attempt", type=int, default=None)
+    p_finish.add_argument("--force", action="store_true")
+    p_finish.add_argument("--since", default=None)
+    _add_context_args(p_finish)
+    p_finish.set_defaults(func=_cmd_finish)
+
+    p_promote = sub.add_parser("promote", help="Promote an integrator node (auto-resolves new_sha)")
+    p_promote.add_argument("node", help="integrator node id")
+    p_promote.add_argument("--attempt", type=int, default=None)
+    p_promote.add_argument("--repo", default=None)
+    _add_context_args(p_promote)
+    p_promote.set_defaults(func=_cmd_promote)
+
+    p_retire = sub.add_parser("retire", help="Retire all eligible terminal orchestrator agents")
+    p_retire.add_argument("--all", action="store_true", help="retire all eligible terminal orchestrator agents")
+    _add_context_args(p_retire)
+    p_retire.set_defaults(func=_cmd_retire)
+
+    p_status = sub.add_parser("status", help="Compact run status + next_command")
+    _add_context_args(p_status)
+    p_status.set_defaults(func=_cmd_status)
+
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    cli_common.run(main, extra_codes=CLI_EXTRA_CODES)
