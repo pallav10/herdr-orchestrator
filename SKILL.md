@@ -51,6 +51,9 @@ Lock-taking entrypoints accept `--lock-timeout SECONDS`: finite positive, defaul
 - `inspect-run.py` — read-only replay and timeline inspector (`--run`, `--format json|text`, `--node`); reports node durations, unverified lock owner diagnostics, and concrete next actions.
 - `doctor.py` — read-only environment, git/gitignore, Herdr protocol (`--skip-herdr`), and OMP context extension preflight; exits 0 when no check fails, 3 on any failure.
 - `run_state.py` — controller Python facade; `load_state(run)` returns replayed state (see API reference).
+- `render-graph.py` — render parameterized templates from `references/templates/graphs/` (`--template`, `--var KEY=VAL`, `--out`), failing closed (exit 2) on unresolved placeholders and validating with `graph_model.validate_graph()`.
+- `run-metrics.py` — read-only replay of `<run>/events.jsonl` for per-node/run wall, active/wait, retry/failure/block, and optional OMP session JSONL token/cost metrics (`--run`, `--write` for `<run>/metrics.json`).
+- `prune-run.py` — opt-in post-delivery cleanup of orchestrator-created linked worktrees and `refs/heads/herdr/<run-id>` (`--dry-run`, `--force-undelivered`, `--lock-timeout`); refuses active/non-terminal nodes, dirty worktrees, unmerged promotion refs, or foreign holders, and never touches the primary checkout or `main`/`master`.
 
 ## Orchestration loop
 Use absolute `RUN`, `SESSION`, repository paths and concrete holder `H={"workspace": W, "pane": P, "session": SESSION}`; `E` is the replayed epoch. Commands below use `python3 scripts/`.
