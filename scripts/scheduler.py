@@ -10,6 +10,7 @@ from graph_model import ATTEMPT_TERMINAL, STATES, _condition_true, _retry_allows
 from ledger import _EVENT_TO, _apply_event, _load_graph_revision, _materialize_locked, _repair_dispatch_snapshots_locked, _replay, append_event_locked, append_events_locked, attempt_dir, with_lock
 from liveness import _live_herdr_records, maybe_interrupt_herdr, maybe_interrupt_native, native_quiesced
 from promotion import _recover_promotion_locked
+from verdict import detect_rework_stagnation
 
 
 def _computed_lifecycle_events(state: dict[str, Any], graph: dict[str, Any]) -> list[dict[str, Any]]:
@@ -235,6 +236,17 @@ def _append_candidates_locked(run_dir: Path, snap: dict[str, Any], graph: dict[s
         return append_events_locked(run_dir, pending, holder=holder)
     return None
 
+def _stagnation_warnings(snap: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    events = snap.get("events") or []
+    nodes = (snap.get("state") or {}).get("nodes") or {}
+    out: dict[str, dict[str, Any]] = {}
+    for node_id in sorted(nodes):
+        report = detect_rework_stagnation(events, node_id)
+        if report["stagnated"]:
+            out[node_id] = report
+    return out
+
+
 
 def reconcile(run_dir: str | Path, *, event: dict[str, Any] | None = None, notify: bool = False, require_native_quiesced: bool = False, current_session: str | None = None, live_native_ids: list[str] | None = None, native_inventory_complete: bool = False, holder: dict[str, str] | None = None, repo: str | Path | None = None, live_herdr: list[dict[str, Any]] | None = None, lock_timeout=120) -> dict[str, Any]:
     """Return {state, controller, notified}."""
@@ -249,7 +261,11 @@ def reconcile(run_dir: str | Path, *, event: dict[str, Any] | None = None, notif
             if require_native_quiesced and not native_quiesced(snap["state"]):
                 raise PreconditionError("native executors are not quiesced")
             _materialize_locked(run_dir, snap, graph)
-            return {"state": snap["state"], "controller": snap["controller"], "notified": notified}
+            result: dict[str, Any] = {"state": snap["state"], "controller": snap["controller"], "notified": notified}
+            stagnation = _stagnation_warnings(snap)
+            if stagnation:
+                result["stagnation"] = stagnation
+            return result
     with with_lock(run_dir, lock_timeout=lock_timeout, node=event.get("node") if event else None):
         snap, graph = _replay(run_dir)
         if not holder_exact(snap["controller"], holder):
@@ -281,4 +297,8 @@ def reconcile(run_dir: str | Path, *, event: dict[str, Any] | None = None, notif
         _materialize_locked(run_dir, snap, graph)
         if require_native_quiesced and not native_quiesced(snap["state"]):
             raise PreconditionError("native executors are not quiesced")
-        return {"state": snap["state"], "controller": snap["controller"], "notified": notified}
+        result: dict[str, Any] = {"state": snap["state"], "controller": snap["controller"], "notified": notified}
+        stagnation = _stagnation_warnings(snap)
+        if stagnation:
+            result["stagnation"] = stagnation
+        return result

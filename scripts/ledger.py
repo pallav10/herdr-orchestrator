@@ -1153,7 +1153,9 @@ def _validate_event_append(run_dir: Path, snap: dict[str, Any], graph: dict[str,
         if int(intent.get("attempt", -1)) == attempt:
             raise PreconditionError(f"attempt {attempt} already has dispatch_intent")
         attempt_path = attempt_dir(run_dir, node_id, attempt)
-        if attempt_path.exists() and any(attempt_path.iterdir()):
+        if attempt_path.exists() and any(
+            child.name != "feedback.md" for child in attempt_path.iterdir()
+        ):
             raise PreconditionError(f"attempt directory is immutable: {attempt_path}")
         event["attempt"] = attempt
         event["consumed"] = _resolve_consumed(snap["state"], graph, node_id)
@@ -1215,7 +1217,7 @@ def _validate_event_append(run_dir: Path, snap: dict[str, Any], graph: dict[str,
         next_attempt = _attempt_int(event.get("next_attempt", attempt + 1), "next_attempt")
         if next_attempt != attempt + 1:
             raise PreconditionError("retried next_attempt must be attempt + 1")
-        if not _retry_allows(graph.get("nodes", {}).get(node_id, {}), state, attempt):
+        if not event.get("force_retry") and not _retry_allows(graph.get("nodes", {}).get(node_id, {}), state, attempt):
             raise PreconditionError(f"retry not allowed after {state}")
         event["next_attempt"] = next_attempt
         return

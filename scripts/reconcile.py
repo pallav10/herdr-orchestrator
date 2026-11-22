@@ -244,6 +244,7 @@ def main() -> int:
     )
     if not args.full:
         controller, state = result["controller"], result["state"]
+        stagnation = result.get("stagnation")
         result = {
             "epoch": controller["epoch"],
             "dispatch": controller["dispatch"],
@@ -261,6 +262,8 @@ def main() -> int:
         }
         if state.get("truncated_tail"):
             result["truncated_tail"] = True
+        if stagnation:
+            result["stagnation"] = stagnation
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0
 
