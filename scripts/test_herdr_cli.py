@@ -273,6 +273,39 @@ class HerdrCliTest(unittest.TestCase):
         self.assertEqual(ctx.exception.stdout, "partial")
         self.assertEqual(ctx.exception.stderr, stderr)
         self.assertEqual(run.call_count, 3)
+    def test_core_mode_translates_agent_workspace_and_metadata_calls(self):
+        env = {"HC_TERMINAL_ID": "t1d", "PATH": "/usr/bin:/bin"}
+        with (
+            mock.patch.dict("os.environ", env, clear=True),
+            mock.patch.object(herdr_cli, "_hc_bin", return_value="/usr/local/bin/hc"),
+        ):
+            self.assertTrue(herdr_cli.is_core_mode())
+            self.assertEqual(herdr_cli.current_holder_env(), ("t1d", "t1d"))
+
+            run = self.stub(result=completed(stdout='{"terminals":[{"address":"t20","name":"w-abc","agent":"omp","state":"live","status":"idle"}]}'))
+            listed = herdr_cli.herdr("agent", "list")
+            self.assertEqual(run.call_args.args[0], ["/usr/local/bin/hc", "ls", "--json"])
+            self.assertEqual(listed["result"]["agents"][0]["name"], "w-abc")
+            self.assertEqual(listed["result"]["agents"][0]["agent_status"], "idle")
+
+            run = self.stub(side_effect=[
+                completed(stdout="{}"),
+                completed(stdout='{"address":"t20","name":"w-abc","state":"live","labels":{"orch.provenance":"orchestrator","orch.run":"r1"}}'),
+            ])
+            stamped = herdr_cli.stamp_workspace_tokens("t20", "r1", tokens=("provenance=orchestrator",))
+            self.assertEqual(run.call_args_list[0].args[0][:3], ["/usr/local/bin/hc", "label", "--json"])
+            self.assertEqual(stamped["result"]["workspace"]["tokens"]["provenance"], "orchestrator")
+            self.assertEqual(stamped["result"]["workspace"]["tokens"]["run"], "r1")
+
+            run = self.stub(result=completed(stdout="screen text\n"))
+            txt = herdr_cli.herdr_text("agent", "read", "w-abc", "--source", "recent-unwrapped", "--lines", "80")
+            self.assertEqual(txt, "screen text\n")
+            self.assertEqual(run.call_args.args[0], ["/usr/local/bin/hc", "read", "--lines", "80", "w-abc"])
+
+            run = self.stub(result=completed(rc=3, stderr='{"error":{"kind":"not_found","message":"no terminal"}}'))
+            with self.assertRaises(run_state.RunError) as ctx:
+                herdr_cli.herdr("agent", "get", "missing")
+            self.assertEqual(ctx.exception.code, "agent_not_found")
 
 
 if __name__ == "__main__":

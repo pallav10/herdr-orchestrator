@@ -33,7 +33,7 @@ import session_docs
 
 from graph_model import LEASE_ACTIVE, LEASE_DRAINING
 from cli_common import SCRIPTS
-from herdr_cli import herdr, stamp_workspace_tokens
+from herdr_cli import current_holder_env, herdr, stamp_workspace_tokens
 
 
 def read_required(path: Path) -> str:
@@ -128,12 +128,11 @@ def main() -> int:
     read_required(next_prompt)
     run = session_docs.session_run(predecessor)
 
-    workspace = os.environ.get("HERDR_WORKSPACE_ID")
+    workspace, pane = current_holder_env()
     if not workspace:
-        raise ioutil.PreconditionError("HERDR_WORKSPACE_ID is not set")
-    pane = os.environ.get("HERDR_PANE_ID")
+        raise ioutil.PreconditionError("HERDR_WORKSPACE_ID (or HC_TERMINAL_ID) is not set")
     if not pane:
-        raise ioutil.PreconditionError("HERDR_PANE_ID is not set")
+        raise ioutil.PreconditionError("HERDR_PANE_ID (or HC_TERMINAL_ID) is not set")
 
     with ledger.with_lock(run, lock_timeout=args.lock_timeout):
         recovered = transferred_successor(run, predecessor, args.nonce, workspace, pane)

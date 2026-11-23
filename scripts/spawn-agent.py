@@ -958,6 +958,15 @@ def main() -> int:
                     # routing metadata is best-effort: `agent get` can lose a race with a
                     # just-started agent. routing_for() falls back to start_payload.
                     print(f"warn: agent get failed for {agent_target}: {exc}", file=sys.stderr)
+                if isinstance(start_payload, dict):
+                    res = start_payload.get("result")
+                    if isinstance(res, dict):
+                        new_ws = res.get("workspace_id")
+                        new_pane = res.get("pane_id")
+                        if isinstance(new_ws, str) and new_ws:
+                            ws_id = new_ws
+                        if isinstance(new_pane, str) and new_pane:
+                            pane = new_pane
 
                 routing = routing_for(
                     [start_payload, agent_get_payload],

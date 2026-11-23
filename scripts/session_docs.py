@@ -24,6 +24,7 @@ import shutil
 from typing import Any
 
 import ioutil
+import herdr_cli
 import ledger
 
 
@@ -44,7 +45,8 @@ def sessions_dir(root: Path) -> Path:
 
 def owner_id() -> str:
     """Workspace/pane identity, or UNKNOWN_OWNER outside Herdr."""
-    return os.environ.get("HERDR_WORKSPACE_ID") or os.environ.get("HERDR_PANE_ID") or UNKNOWN_OWNER
+    ws, pane = herdr_cli.current_holder_env()
+    return ws or pane or UNKNOWN_OWNER
 
 
 def read_meta(session: Path) -> dict[str, Any]:
@@ -77,7 +79,8 @@ def holder_identity(session: Path, holder: dict[str, str]) -> tuple[str, str]:
     workspace, pane = holder.get("workspace"), holder.get("pane")
     if not isinstance(workspace, str) or not workspace or not isinstance(pane, str) or not pane:
         raise ioutil.PreconditionError("holder workspace and pane are required")
-    if os.environ.get("HERDR_WORKSPACE_ID") != workspace or os.environ.get("HERDR_PANE_ID") != pane:
+    env_ws, env_pane = herdr_cli.current_holder_env()
+    if env_ws != workspace or env_pane != pane:
         raise ioutil.PreconditionError("holder does not match HERDR_WORKSPACE_ID/HERDR_PANE_ID")
     meta = read_meta(session)
     if meta.get("workspace") != workspace or meta.get("pane") != pane:
@@ -143,8 +146,7 @@ def find_owner_session(root: Path, owner: str | None = None, job: str | None = N
     owner = owner or owner_id()
     if owner == UNKNOWN_OWNER:
         return None
-    workspace = os.environ.get("HERDR_WORKSPACE_ID")
-    pane = os.environ.get("HERDR_PANE_ID")
+    workspace, pane = herdr_cli.current_holder_env()
     for session, meta in reversed(ordered_sessions(root)):
         if meta.get("owner") != owner:
             continue
@@ -405,10 +407,11 @@ def open_session(root: Path, *, job: str, template_dir: Path, owner: str | None 
     session = _claim_session(parent_dir, f"{stamp}-{ioutil.slug(job, trim_after_limit=False)}")
     session_id = session.name
 
+    env_ws, env_pane = herdr_cli.current_holder_env()
     context = {
         "JOB": job,
         "DATE": dt.date.today().isoformat(),
-        "PANE": os.environ.get("HERDR_PANE_ID", UNKNOWN_OWNER),
+        "PANE": env_pane or UNKNOWN_OWNER,
         "SESSION": session_id,
         "SESSION_DIR": _session_abs(session),
         "RUN": run_abs,
@@ -426,8 +429,8 @@ def open_session(root: Path, *, job: str, template_dir: Path, owner: str | None 
             "job": job,
             "owner": owner,
             "created": dt.datetime.now().astimezone().isoformat(timespec="microseconds"),
-            "workspace": os.environ.get("HERDR_WORKSPACE_ID") or UNKNOWN_OWNER,
-            "pane": os.environ.get("HERDR_PANE_ID") or UNKNOWN_OWNER,
+            "workspace": env_ws or UNKNOWN_OWNER,
+            "pane": env_pane or UNKNOWN_OWNER,
             "parent": prev.name if prev is not None else None,
             "run": run_abs,
         }

@@ -10,8 +10,8 @@ One controller owns the task graph and durable run ledger (`events.jsonl`); work
 Use native `task`/`workflow` for bounded session-local work, `herdr-agent` for durable workers/isolated writers, and `pane` for existing user panes.
 
 ## Choose the workflow first
-- **Bounded existing-pane work:** use native Herdr controls (`herdr agent prompt` / background wait). No graph or session scaffolding needed. See [native pane playbook](references/controller-playbook.md#native-existing-pane-playbook).
-- **Durable coordinated execution:** use `scripts/ho.py` below. It auto-resolves `HERDR_WORKSPACE_ID`, `HERDR_PANE_ID`, canonical `session`/`run`, and current `epoch`, and drives the entire run through `ho next`.
+- **Bounded existing-pane work:** use native Herdr controls (`herdr agent prompt` in legacy Herdr, or `hc send`/`hc wait` in `herdr-core`). No graph or session scaffolding needed. See [native pane playbook](references/controller-playbook.md#native-existing-pane-playbook).
+- **Durable coordinated execution:** use `scripts/ho.py` below. It auto-resolves legacy Herdr (`HERDR_WORKSPACE_ID`/`HERDR_PANE_ID`) or `herdr-core` (`HC_TERMINAL_ID` via `hc`), canonical `session`/`run`, and current `epoch`, and drives the entire run through `ho next`.
 
 Resolve `ho.py` relative to this skill's installed directory (use absolute path when `cwd` is the target repo).
 

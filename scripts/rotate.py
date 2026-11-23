@@ -43,7 +43,7 @@ import scheduler
 import session_docs
 import context_usage
 
-from herdr_cli import herdr
+from herdr_cli import current_holder_env, herdr
 from graph_model import AGENT_NAME_RE, LEASE_ACTIVE, LEASE_DRAINING, PROVENANCE_ORCHESTRATOR
 from cli_common import SCRIPTS, run_child
 import reconcile
@@ -80,8 +80,7 @@ def _string_dict(raw: object) -> dict[str, str]:
 
 
 def predecessor_meta(session: Path) -> dict[str, Any]:
-    workspace = os.environ.get("HERDR_WORKSPACE_ID")
-    pane = os.environ.get("HERDR_PANE_ID")
+    workspace, pane = current_holder_env()
     session_id = ioutil.canonical_path(session)
     session_docs.holder_identity(session, {"workspace": workspace, "pane": pane, "session": session_id})
     provenance = "user-owned"

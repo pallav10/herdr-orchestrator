@@ -31,7 +31,7 @@ import ledger
 import promotion
 import scheduler
 import session_docs
-from herdr_cli import herdr
+from herdr_cli import current_holder_env, herdr
 
 CLI_EXTRA_CODES = {RuntimeError: 1}
 HO_SCRIPT = Path(__file__).resolve()
@@ -87,8 +87,9 @@ def _resolve_context(
     require_holder: bool = True,
     require_epoch: bool = False,
 ) -> dict[str, Any]:
-    workspace = getattr(args, "holder_workspace", None) or os.environ.get("HERDR_WORKSPACE_ID")
-    pane = getattr(args, "holder_pane", None) or os.environ.get("HERDR_PANE_ID")
+    env_ws, env_pane = current_holder_env()
+    workspace = getattr(args, "holder_workspace", None) or env_ws
+    pane = getattr(args, "holder_pane", None) or env_pane
     session_raw = getattr(args, "session", None)
     run_raw = getattr(args, "run", None)
     docs_raw = getattr(args, "docs", None)

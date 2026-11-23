@@ -166,6 +166,24 @@ def _check_herdr(*, skip_herdr: bool) -> list[dict[str, str]]:
         return [_check("herdr", "ok", "skipped via --skip-herdr")]
 
     checks: list[dict[str, str]] = []
+    if herdr_cli.is_core_mode():
+        tid = os.environ["HC_TERMINAL_ID"]
+        checks.append(_check("herdr_env", "ok", f"herdr-core terminal={tid}"))
+        try:
+            hc_bin = herdr_cli._hc_bin()
+        except ioutil.RunError:
+            checks.append(_check("herdr_bin", "fail", "hc not found on PATH"))
+            return checks
+        checks.append(_check("herdr_bin", "ok", hc_bin))
+        try:
+            payload = herdr_cli.herdr("api", "schema", "--json")
+        except ioutil.RunError as exc:
+            checks.append(_check("herdr_protocol", "fail", str(exc)))
+            return checks
+        proto = _extract_protocol_version(payload)
+        checks.append(_check("herdr_protocol", "ok", f"herdr-core reachable (version={proto})" if proto else "herdr-core reachable"))
+        return checks
+
     missing_env = [var for var in REQUIRED_HERDR_ENV if not os.environ.get(var)]
     if missing_env:
         checks.append(_check("herdr_env", "warn", "missing env var(s): " + ", ".join(missing_env)))
@@ -202,8 +220,7 @@ def _check_herdr(*, skip_herdr: bool) -> list[dict[str, str]]:
 
 def _check_context_extension() -> dict[str, str]:
     ctx_dir = Path.home() / context_usage.CONTEXT_DIRECTORY
-    workspace = os.environ.get("HERDR_WORKSPACE_ID")
-    pane = os.environ.get("HERDR_PANE_ID")
+    workspace, pane = herdr_cli.current_holder_env()
 
     if workspace and pane:
         snap_path = context_usage.context_snapshot_path(workspace, pane)

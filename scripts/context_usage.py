@@ -12,7 +12,7 @@ from typing import Any, NoReturn
 
 import ioutil
 import session_docs
-from herdr_cli import herdr
+from herdr_cli import herdr, is_core_mode
 
 CONTEXT_SOURCE = "OMP ExtensionContext.getContextUsage"
 CONTEXT_MAX_AGE_MS = 5000
@@ -81,6 +81,10 @@ def _now_ms() -> int:
 
 
 def _require_chosen_herdr() -> None:
+    if is_core_mode():
+        if not os.environ.get("HC_TERMINAL_ID"):
+            _refuse("HC_TERMINAL_ID is required")
+        return
     if os.environ.get("HERDR_ENV") != "1":
         _refuse("HERDR_ENV=1 is required")
     if not os.environ.get("HERDR_SOCKET_PATH") or not os.environ.get("HERDR_SESSION"):
@@ -92,7 +96,7 @@ def _holder_identity(session: Path, holder: dict[str, str]) -> tuple[str, str]:
         workspace, pane = session_docs.holder_identity(session, holder)
     except (ioutil.PreconditionError, ioutil.UsageError) as exc:
         _refuse(str(exc))
-    if not pane.startswith(f"{workspace}:"):
+    if not is_core_mode() and not pane.startswith(f"{workspace}:"):
         _refuse("pane id is not an exact workspace prefix")
     return workspace, pane
 

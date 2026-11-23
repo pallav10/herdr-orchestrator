@@ -8,7 +8,7 @@
 
 *Dependency graphs, isolated Git worktrees, ownership gates, receipt-backed promotion, and seamless controller rotation — built on zero-dependency Python stdlib.*
 
-[![Version](https://img.shields.io/badge/version-1.6.1-6366F1?style=flat-square)](package.json)
+[![Version](https://img.shields.io/badge/version-1.7.0-6366F1?style=flat-square)](package.json)
 [![Python](https://img.shields.io/badge/python-3%20stdlib%20only-38BDF8?style=flat-square&logo=python&logoColor=white)](#requirements)
 [![Platform](https://img.shields.io/badge/platform-POSIX%20%7C%20OMP%20Plugin-10B981?style=flat-square)](#install)
 [![License: MIT](https://img.shields.io/badge/license-MIT-F59E0B?style=flat-square)](LICENSE)

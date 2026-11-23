@@ -41,9 +41,10 @@ function writeSnapshot(workspace: string, pane: string, payload: Record<string, 
 }
 
 function snapshot(ctx: ExtensionContext, reason?: string): void {
-  if (ctx.hasUI !== true || ctx.agent?.kind !== "main" || process.env.HERDR_ENV !== "1") return;
-  const workspace = process.env.HERDR_WORKSPACE_ID;
-  const pane = process.env.HERDR_PANE_ID;
+  if (ctx.hasUI !== true || ctx.agent?.kind !== "main") return;
+  const inLegacy = process.env.HERDR_ENV === "1";
+  const workspace = inLegacy ? process.env.HERDR_WORKSPACE_ID : process.env.HC_TERMINAL_ID;
+  const pane = inLegacy ? process.env.HERDR_PANE_ID : process.env.HC_TERMINAL_ID;
   if (!workspace || !pane) return;
 
   const payload: Record<string, unknown> = {
