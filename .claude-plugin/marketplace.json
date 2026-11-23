@@ -1,0 +1,24 @@
+{
+  "name": "pallav10",
+  "owner": {
+    "name": "Pallav Parikh"
+  },
+  "metadata": {
+    "description": "Herdr orchestration plugin for Claude Code and multi-harness environments",
+    "version": "1.8.0"
+  },
+  "plugins": [
+    {
+      "name": "herdr-orchestrator",
+      "source": "./",
+      "version": "1.8.0",
+      "description": "Durable controller-pane orchestration for Herdr across OMP, Claude Code, Codex, Copilot CLI, Pi, and Grok Build.",
+      "author": {
+        "name": "Pallav Parikh"
+      },
+      "homepage": "https://github.com/pallav10/herdr-orchestrator",
+      "license": "MIT",
+      "skills": ["./"]
+    }
+  ]
+}

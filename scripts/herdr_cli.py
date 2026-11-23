@@ -11,6 +11,7 @@ import json
 import subprocess
 from pathlib import Path
 from typing import Any
+import harnesses
 import ioutil
 from cli_common import token_flag
 from graph_model import PROVENANCE_ORCHESTRATOR
@@ -222,7 +223,7 @@ def _hc_term_to_agent(term: dict[str, Any]) -> dict[str, Any]:
         "workspace_id": addr,
         "pane_id": addr,
         "agent_status": _hc_status(term),
-        "kind": app or "omp",
+        "kind": harnesses.normalize_kind(app) or harnesses.default_kind(),
     }
     if isinstance(name, str) and name:
         agent["name"] = name
@@ -407,7 +408,8 @@ def _hc_dispatch(args: tuple[str, ...]) -> dict[str, Any]:
         target_name = rest[0]
         flags, _, extra = _parse_flag_map(rest[1:])
         pane = flags.get("--pane") or target_name
-        kind = flags.get("--kind") or "omp"
+        kind = harnesses.default_kind(explicit=flags.get("--kind"))
+        binary = harnesses.get_spec(kind).binary
         # Launch the agent directly in a fresh hc terminal bound to the same cwd/labels, replacing the placeholder shell.
         term = _hc_json(["get", "--json", pane], orig_args=args)
         cwd = term.get("cwd") or os.getcwd()
@@ -416,7 +418,7 @@ def _hc_dispatch(args: tuple[str, ...]) -> dict[str, Any]:
         for k, v in old_labels.items():
             if isinstance(k, str) and isinstance(v, str):
                 run_argv.extend(["--label", f"{k}={v}"])
-        run_argv.extend(["--", kind, *extra])
+        run_argv.extend(["--", binary, *extra])
         # Kill placeholder shell first, then start the named agent terminal; callers re-fetch workspace/pane via agent get.
         created = _hc_json(run_argv, orig_args=args, timeout=TIMEOUT)
         new_addr = created.get("address") or created.get("id")

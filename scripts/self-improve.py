@@ -13,11 +13,11 @@ import tempfile
 from pathlib import Path
 
 import cli_common
+import harnesses
 import ioutil
 
 SCRIPTS = Path(__file__).resolve().parent
-JOBS = Path.home() / ".omp/run/herdr-improvements"
-
+JOBS = harnesses.state_dir("improvements")
 
 def _validate_skill_repo(repo: Path) -> Path:
     if not (repo / "SKILL.md").is_file() or not (repo / "scripts/spawn-agent.py").is_file():
@@ -94,11 +94,17 @@ def launch_job(directory: Path) -> int:
         ioutil.atomic_text(prompt, worker_prompt(job))
         job["status"] = "launching"
         ioutil.atomic_json(directory / "job.json", job)
-        job["launch"] = cli_common.run_child([
+        spawn_argv = [
             sys.executable, str(SCRIPTS / "spawn-agent.py"), job["id"],
-            "--cwd", str(checkout), "--model-role", job["model_role"],
-            "--no-orchestrate", "--prompt-file", str(prompt),
-        ], "spawn-agent.py")
+            "--cwd", str(checkout), "--no-orchestrate", "--prompt-file", str(prompt),
+        ]
+        if job.get("kind"):
+            spawn_argv += ["--kind", job["kind"]]
+        if job.get("model"):
+            spawn_argv += ["--model", job["model"]]
+        elif job.get("model_role"):
+            spawn_argv += ["--model-role", job["model_role"]]
+        job["launch"] = cli_common.run_child(spawn_argv, "spawn-agent.py")
         launch = job["launch"]
         job["status"] = "working" if launch.get("prompted") and not launch.get("blocked") else "blocked"
         ioutil.atomic_json(directory / "job.json", job)
@@ -114,7 +120,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--finding", help="concrete issue/improvement, evidence, and acceptance check")
     parser.add_argument("--skill-repo", default=str(SCRIPTS.parent), help="editable skill Git root; required for installed copies outside Git")
+    parser.add_argument("--kind", default=None, help="worker harness kind (omp, claude, codex, copilot, pi, grok, ...)")
     parser.add_argument("--model-role", default="task")
+    parser.add_argument("--model", default=None)
     parser.add_argument("--launch-job", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     try:
@@ -132,7 +140,9 @@ def main() -> int:
             "repo": str(repo),
             "checkout": str(directory / "checkout"),
             "branch": f"skill-improvement/{directory.name}",
+            "kind": args.kind,
             "model_role": args.model_role,
+            "model": args.model,
             "finding": args.finding.strip(),
         }
         ioutil.atomic_json(directory / "job.json", job)

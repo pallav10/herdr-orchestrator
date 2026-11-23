@@ -1,0 +1,12 @@
+{
+  "name": "herdr-orchestrator",
+  "version": "1.8.0",
+  "description": "Durable multi-agent orchestration across OMP, Claude Code, Codex, Copilot CLI, Pi, and Grok Build from one Herdr controller pane.",
+  "author": {
+    "name": "Pallav Parikh"
+  },
+  "homepage": "https://github.com/pallav10/herdr-orchestrator",
+  "repository": "https://github.com/pallav10/herdr-orchestrator",
+  "license": "MIT",
+  "skills": "./"
+}

@@ -100,6 +100,9 @@ def validate_graph(graph: dict[str, Any]) -> None:
         raise PreconditionError("graph must be an object")
     if graph.get("schema_version") != SCHEMA_VERSION:
         raise PreconditionError("graph.schema_version must be 1")
+    default_kind = graph.get("default_kind")
+    if default_kind is not None and (not isinstance(default_kind, str) or not default_kind.strip()):
+        raise PreconditionError("graph.default_kind must be a non-empty string")
     nodes = graph.get("nodes")
     if not isinstance(nodes, dict):
         raise PreconditionError("graph.nodes must be an object")
@@ -114,6 +117,9 @@ def validate_graph(graph: dict[str, Any]) -> None:
 
         if node.get("executor") not in EXECUTORS:
             raise PreconditionError(f"node {node_id} executor must be one of {sorted(EXECUTORS)}")
+        node_kind = node.get("kind")
+        if node_kind is not None and (not isinstance(node_kind, str) or not node_kind.strip()):
+            raise PreconditionError(f"node {node_id}.kind must be a non-empty string")
         deps = _as_list(node.get("depends_on"), f"{node_id}.depends_on")
         for dep in deps:
             if not isinstance(dep, str) or dep not in nodes:

@@ -219,7 +219,9 @@ def _check_herdr(*, skip_herdr: bool) -> list[dict[str, str]]:
 
 
 def _check_context_extension() -> dict[str, str]:
-    ctx_dir = Path.home() / context_usage.CONTEXT_DIRECTORY
+    import harnesses
+    neutral_dir = harnesses.state_dir("context")
+    legacy_dir = Path.home() / context_usage.CONTEXT_DIRECTORY
     workspace, pane = herdr_cli.current_holder_env()
 
     if workspace and pane:
@@ -256,24 +258,29 @@ def _check_context_extension() -> dict[str, str]:
             )
         return _check("omp_context_extension", "warn", "snapshot missing observed_at_ms timestamp")
 
-    if not ctx_dir.is_dir():
-        return _check(
-            "omp_context_extension",
-            "warn",
-            f"{ctx_dir} not found (non-fatal unless rotating)",
-        )
-    snapshots = sorted(ctx_dir.glob("*.json"))
+    snapshots: list[Path] = []
+    for candidate_dir in (neutral_dir, legacy_dir):
+        if candidate_dir.is_dir():
+            snapshots.extend(sorted(candidate_dir.glob("*.json")))
     if not snapshots:
         return _check(
             "omp_context_extension",
             "warn",
-            f"no context snapshots under {ctx_dir} (non-fatal unless rotating)",
+            f"no context snapshots under {neutral_dir} or {legacy_dir} (non-fatal unless rotating)",
         )
     return _check(
         "omp_context_extension",
         "ok",
-        f"{len(snapshots)} snapshot(s) present under {ctx_dir}",
+        f"{len(snapshots)} snapshot(s) present",
     )
+
+
+def _check_harnesses() -> dict[str, str]:
+    import harnesses
+    found = [kind for kind, spec in sorted(harnesses.HARNESSES.items()) if shutil.which(spec.binary)]
+    if found:
+        return _check("harnesses", "ok", f"available: {', '.join(found)} (default: {harnesses.default_kind()})")
+    return _check("harnesses", "warn", "no known harness binaries found on PATH")
 
 
 def run_doctor(
@@ -287,6 +294,7 @@ def run_doctor(
     checks.extend(_check_git_and_repo(repo, docs_dir))
     checks.extend(_check_herdr(skip_herdr=skip_herdr))
     checks.append(_check_context_extension())
+    checks.append(_check_harnesses())
     ok = all(item["status"] != "fail" for item in checks)
     return {"ok": ok, "checks": checks}
 

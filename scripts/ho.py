@@ -497,8 +497,8 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
             raise ioutil.UsageError("dispatching a herdr-agent requires --prompt-file or --prompt")
         child = "dispatch-agent.py"
     elif executor == "script":
-        if any(value is not None for value in (args.prompt_file, args.prompt, args.model_role, args.model, args.name)):
-            raise ioutil.UsageError("prompt, model, and name options are only supported for herdr-agent nodes")
+        if any(value is not None for value in (args.prompt_file, args.prompt, args.model_role, args.model, args.name, args.kind, args.requested_effort)):
+            raise ioutil.UsageError("prompt, model, kind, effort, and name options are only supported for herdr-agent nodes")
         child = "run-script.py"
         timeout += plan.get("timeout_sec") or 0
     else:
@@ -525,8 +525,16 @@ def _cmd_dispatch(args: argparse.Namespace) -> int:
         argv += ["--model-role", args.model_role]
     if args.model:
         argv += ["--model", args.model]
+    if args.requested_effort:
+        argv += ["--requested-effort", args.requested_effort]
+    if args.kind:
+        argv += ["--kind", args.kind]
     if args.name:
         argv += ["--name", args.name]
+    if args.orchestrate is True:
+        argv.append("--orchestrate")
+    elif args.orchestrate is False:
+        argv.append("--no-orchestrate")
     result = cli_common.run_child(argv, child, timeout=timeout)
     print(json.dumps({**result, "next_command": _ho_cmd("next", "--run", str(ctx["run"]))}))
     return 0
@@ -723,8 +731,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_dispatch.add_argument("--cwd", default=None)
     p_dispatch.add_argument("--model-role", default=None)
     p_dispatch.add_argument("--model", default=None)
+    p_dispatch.add_argument("--requested-effort", default=None)
+    p_dispatch.add_argument("--kind", default=None, help="worker harness kind (omp, claude, codex, copilot, pi, grok, ...)")
     p_dispatch.add_argument("--name", default=None)
     p_dispatch.add_argument("--epoch", type=int, default=None)
+    orch = p_dispatch.add_mutually_exclusive_group()
+    orch.add_argument("--orchestrate", action="store_true", dest="orchestrate")
+    orch.add_argument("--no-orchestrate", action="store_false", dest="orchestrate")
+    p_dispatch.set_defaults(orchestrate=None)
     _add_context_args(p_dispatch)
     p_dispatch.set_defaults(func=_cmd_dispatch)
 

@@ -116,19 +116,31 @@ def _parse_session_usage(session_path: Path) -> dict[str, Any] | None:
                     continue
                 if not isinstance(entry, dict):
                     continue
-                msg = entry.get("message") if isinstance(entry.get("message"), dict) else entry
-                usage = msg.get("usage") if isinstance(msg.get("usage"), dict) else None
+                msg = entry.get("message") if isinstance(entry.get("message"), dict) else (
+                    entry.get("payload") if isinstance(entry.get("payload"), dict) else entry
+                )
+                usage = msg.get("usage") if isinstance(msg.get("usage"), dict) else (
+                    msg.get("info", {}).get("last_token_usage")
+                    if isinstance(msg.get("info"), dict) and isinstance(msg.get("info", {}).get("last_token_usage"), dict)
+                    else None
+                )
                 if usage is None:
                     continue
                 inp = _num(usage.get("input"))
                 if inp is None:
                     inp = _num(usage.get("input_tokens"))
+                if inp is None:
+                    inp = _num(usage.get("prompt_tokens"))
                 out = _num(usage.get("output"))
                 if out is None:
                     out = _num(usage.get("output_tokens"))
+                if out is None:
+                    out = _num(usage.get("completion_tokens"))
                 cr = _num(usage.get("cacheRead"))
                 if cr is None:
                     cr = _num(usage.get("cache_read_input_tokens"))
+                if cr is None:
+                    cr = _num(usage.get("cached_input_tokens"))
                 cw = _num(usage.get("cacheWrite"))
                 if cw is None:
                     cw = _num(usage.get("cache_creation_input_tokens"))

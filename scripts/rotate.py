@@ -206,7 +206,9 @@ def successor_prompt(session: Path, ack_script: Path, nonce: str, run: Path, *, 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--label", default="successor")
+    parser.add_argument("--kind", default=None, help="successor harness kind (defaults to predecessor/env/omp)")
     parser.add_argument("--model-role", default="default")
+    parser.add_argument("--model", default=None, help="explicit successor model (overrides --model-role)")
     parser.add_argument("--session", required=True, help="predecessor session directory")
     parser.add_argument("--timeout", type=int, default=300)
     cli_common.add_lock_timeout_arg(parser)
@@ -243,13 +245,22 @@ def main() -> int:
 
     nonce = uuid.uuid4().hex
     prompt = successor_prompt(session, ack_script.resolve(), nonce, run, lock_timeout=args.lock_timeout)
+    import harnesses
+    succ_kind = harnesses.default_kind(explicit=args.kind, detected_kind=usage.get("harness"))
     cmd = [
         sys.executable,
         str(spawn_script),
         args.label,
-        "--model-role",
-        args.model_role,
-        "--orchestrate",
+        "--kind",
+        succ_kind,
+    ]
+    if args.model:
+        cmd += ["--model", args.model]
+    elif args.model_role:
+        cmd += ["--model-role", args.model_role]
+    if harnesses.get_spec(succ_kind).orchestrate_default:
+        cmd.append("--orchestrate")
+    cmd += [
         "--prompt",
         prompt,
         "--lock-timeout", str(args.lock_timeout),

@@ -1,4 +1,4 @@
-"""Measured OMP context usage and same-process anti-spoof validation."""
+"""Measured harness context usage and same-process anti-spoof validation."""
 from __future__ import annotations
 
 import hashlib
@@ -10,6 +10,7 @@ import stat
 import time
 from typing import Any, NoReturn
 
+import harnesses
 import ioutil
 import session_docs
 from herdr_cli import herdr, is_core_mode
@@ -33,10 +34,21 @@ _SNAPSHOT_KEYS = {
     "model",
     "context_usage",
 }
-_LSP_MARKERS = ("pyright", "language-server", "pylsp", "tsserver")
+_GENERIC_SNAPSHOT_KEYS = {
+    "schema_version",
+    "harness",
+    "source",
+    "workspace",
+    "pane",
+    "pid",
+    "observed_at_ms",
+    "available",
+    "model",
+    "context_usage",
+}
+_GENERIC_OPTIONAL_KEYS = {"session_file", "session_id"}
 _OMP_CLI_ENTRY = "@oh-my-pi/pi-coding-agent/dist/cli.js"
 _JS_HOSTS = frozenset({"bun", "node"})
-
 
 class ContextUsageError(ioutil.PreconditionError):
     """Measured context usage is missing, invalid, or below 50%."""
@@ -56,10 +68,15 @@ class ContextUsageError(ioutil.PreconditionError):
         self.guidance = guidance or "Resolve the measurement refusal and retry in the same pane."
 
 
-def context_snapshot_path(workspace: str, pane: str) -> Path:
+def context_snapshot_path(workspace: str, pane: str, *, prefer_neutral: bool = False) -> Path:
     digest = hashlib.sha256(f"{workspace}\n{pane}".encode("utf-8")).hexdigest()
-    return Path.home() / CONTEXT_DIRECTORY / f"{digest}.json"
-
+    neutral = harnesses.state_dir("context") / f"{digest}.json"
+    legacy = Path.home() / CONTEXT_DIRECTORY / f"{digest}.json"
+    if prefer_neutral:
+        return neutral
+    if neutral.exists() and not legacy.exists():
+        return neutral
+    return legacy
 
 def _refuse(
     reason: str,
@@ -113,7 +130,7 @@ def _herdr_result(*args: str) -> dict[str, Any]:
     return result
 
 
-def _pane_view(result: dict[str, Any], workspace: str, pane: str) -> tuple[Any, ...]:
+def _pane_view(result: dict[str, Any], workspace: str, pane: str, *, expected_harness: str = "omp") -> tuple[Any, ...]:
     if result.get("type") != "pane_info":
         _refuse("ambiguous pane get")
     live = result.get("pane")
@@ -121,26 +138,35 @@ def _pane_view(result: dict[str, Any], workspace: str, pane: str) -> tuple[Any, 
         _refuse("ambiguous pane get")
     if live.get("pane_id") != pane or live.get("workspace_id") != workspace:
         _refuse("live pane identity mismatch")
-    if live.get("agent") != "omp":
-        _refuse("live agent is not omp")
+    live_agent = harnesses.normalize_kind(live.get("agent")) if isinstance(live.get("agent"), str) else None
+    if live_agent != expected_harness:
+        _refuse(f"live agent is not {expected_harness}")
+    if expected_harness == "omp":
+        info = live.get("agent_session")
+        if not isinstance(info, dict):
+            _refuse("live agent_session missing")
+        if info.get("kind") != "path" or info.get("source") != "herdr:omp" or info.get("agent") != "omp":
+            _refuse("live agent_session is not a herdr:omp path")
+        value = info.get("value")
+        if not isinstance(value, str) or not value:
+            _refuse("live agent_session path missing")
+        return (
+            live.get("pane_id"),
+            live.get("workspace_id"),
+            live.get("agent"),
+            info.get("kind"),
+            info.get("source"),
+            info.get("agent"),
+            value,
+        )
     info = live.get("agent_session")
-    if not isinstance(info, dict):
-        _refuse("live agent_session missing")
-    if info.get("kind") != "path" or info.get("source") != "herdr:omp" or info.get("agent") != "omp":
-        _refuse("live agent_session is not a herdr:omp path")
-    value = info.get("value")
-    if not isinstance(value, str) or not value:
-        _refuse("live agent_session path missing")
+    value = info.get("value") if isinstance(info, dict) and isinstance(info.get("value"), str) and info.get("value") else None
     return (
         live.get("pane_id"),
         live.get("workspace_id"),
-        live.get("agent"),
-        info.get("kind"),
-        info.get("source"),
-        info.get("agent"),
+        live_agent,
         value,
     )
-
 
 def _process_basenames(proc: dict[str, Any]) -> set[str]:
     found: set[str] = set()
@@ -160,24 +186,10 @@ def _process_basenames(proc: dict[str, Any]) -> set[str]:
 
 
 def _is_omp_process(proc: dict[str, Any]) -> bool:
-    names = _process_basenames(proc)
-    if any(any(marker in item.lower() for marker in _LSP_MARKERS) or item.lower().endswith("lsp") for item in names):
-        return False
-    argv = proc.get("argv")
-    cmdline = proc.get("cmdline")
-    if (isinstance(argv, list) and any(isinstance(item, str) and "__omp_worker" in item for item in argv)) or (
-        isinstance(cmdline, str) and "__omp_worker" in cmdline
-    ):
-        return False
-    if "omp" in names:
-        return True
-    if not names & _JS_HOSTS or not isinstance(argv, list) or len(argv) < 2 or not isinstance(argv[1], str) or not argv[1]:
-        return False
-    entry = argv[1].replace("\\", "/")
-    return Path(entry).name == "omp" or entry == _OMP_CLI_ENTRY or entry.endswith("/" + _OMP_CLI_ENTRY)
+    return harnesses.is_harness_process(proc, "omp")
 
 
-def _owning_pid(result: dict[str, Any], pane: str) -> tuple[Any, ...]:
+def _owning_pid(result: dict[str, Any], pane: str, *, expected_harness: str = "omp") -> tuple[Any, ...]:
     if result.get("type") != "pane_process_info":
         _refuse("ambiguous process-info")
     info = result.get("process_info")
@@ -190,8 +202,9 @@ def _owning_pid(result: dict[str, Any], pane: str) -> tuple[Any, ...]:
     if not isinstance(procs, list):
         _refuse("foreground process list is unavailable")
     leader = next((proc for proc in procs if isinstance(proc, dict) and proc.get("pid") == group), None)
-    if not isinstance(leader, dict) or not _is_omp_process(leader):
-        _refuse("owning pid is not the OMP foreground process")
+    if not isinstance(leader, dict) or not harnesses.is_harness_process(leader, expected_harness):
+        label = "OMP" if expected_harness == "omp" else expected_harness
+        _refuse(f"owning pid is not the {label} foreground process")
     return (info.get("pane_id"), group, procs)
 
 
@@ -307,81 +320,133 @@ def read_context_usage(session: Path, holder: dict[str, str]) -> dict[str, Any]:
     blob = _read_snapshot_bytes(path)
     parsed = _parse_snapshot(blob)
     source = _known_source(parsed)
-    if parsed.get("source") != CONTEXT_SOURCE:
-        _refuse("context snapshot source is not ExtensionContext.getContextUsage", source=source)
-    if parsed.get("available") is not True:
-        reason = parsed.get("reason")
-        _refuse(
-            reason if isinstance(reason, str) and reason else "context snapshot unavailable",
-            source=CONTEXT_SOURCE,
-        )
     version = parsed.get("schema_version")
-    if (
-        set(parsed) != _SNAPSHOT_KEYS
-        or isinstance(version, bool)
-        or not isinstance(version, int)
-        or version != 1
-    ):
-        _refuse("context snapshot is malformed", source=CONTEXT_SOURCE)
+    is_generic = version == 2 and isinstance(parsed.get("harness"), str)
+
+    if is_generic:
+        harness = harnesses.normalize_kind(parsed.get("harness"))
+        if not harness:
+            _refuse("context snapshot harness is malformed", source=source)
+        expected_source = harnesses.get_spec(harness).context_source or source
+        if not source or (expected_source and source != expected_source):
+            _refuse(f"context snapshot source is not {expected_source}", source=source)
+        if parsed.get("available") is not True:
+            reason = parsed.get("reason")
+            _refuse(
+                reason if isinstance(reason, str) and reason else "context snapshot unavailable",
+                source=source,
+            )
+        keys = set(parsed)
+        if not _GENERIC_SNAPSHOT_KEYS.issubset(keys) or not keys.issubset(_GENERIC_SNAPSHOT_KEYS | _GENERIC_OPTIONAL_KEYS):
+            _refuse("context snapshot is malformed", source=source)
+    else:
+        harness = "omp"
+        if parsed.get("source") != CONTEXT_SOURCE:
+            _refuse("context snapshot source is not ExtensionContext.getContextUsage", source=source)
+        source = CONTEXT_SOURCE
+        if parsed.get("available") is not True:
+            reason = parsed.get("reason")
+            _refuse(
+                reason if isinstance(reason, str) and reason else "context snapshot unavailable",
+                source=CONTEXT_SOURCE,
+            )
+        if (
+            set(parsed) != _SNAPSHOT_KEYS
+            or isinstance(version, bool)
+            or not isinstance(version, int)
+            or version != 1
+        ):
+            _refuse("context snapshot is malformed", source=CONTEXT_SOURCE)
+
     if parsed.get("workspace") != workspace or parsed.get("pane") != pane:
-        _refuse("context snapshot identity mismatch", source=CONTEXT_SOURCE)
+        _refuse("context snapshot identity mismatch", source=source)
     pid = parsed.get("pid")
     if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
-        _refuse("context snapshot pid is malformed", source=CONTEXT_SOURCE)
+        _refuse("context snapshot pid is malformed", source=source)
     observed = parsed.get("observed_at_ms")
     if isinstance(observed, bool) or not isinstance(observed, int):
-        _refuse("context snapshot timestamp is malformed", source=CONTEXT_SOURCE)
-    _require_fresh(observed)
+        _refuse("context snapshot timestamp is malformed", source=source)
+    _require_fresh(observed, source=source)
     model = parsed.get("model")
     if not isinstance(model, dict) or set(model) != {"provider", "id"}:
-        _refuse("context snapshot model is malformed", source=CONTEXT_SOURCE)
+        _refuse("context snapshot model is malformed", source=source)
     provider = model.get("provider")
     model_id = model.get("id")
     if not isinstance(provider, str) or not provider or not isinstance(model_id, str) or not model_id:
-        _refuse("context snapshot model is malformed", source=CONTEXT_SOURCE)
+        _refuse("context snapshot model is malformed", source=source)
     usage = parsed.get("context_usage")
     if not isinstance(usage, dict) or set(usage) != {"tokens", "context_window"}:
-        _refuse("context snapshot usage is malformed", source=CONTEXT_SOURCE)
-    tokens = _finite_usage(usage.get("tokens"), name="tokens", positive=False, source=CONTEXT_SOURCE)
-    window = _finite_usage(usage.get("context_window"), name="context_window", positive=True, source=CONTEXT_SOURCE)
-    session_file = _canonical_session_file(parsed.get("omp_session_file"), CONTEXT_SOURCE)
-    session_id = parsed.get("omp_session_id")
-    if not isinstance(session_id, str) or not session_id:
-        _refuse("context snapshot session id is malformed", source=CONTEXT_SOURCE)
-    if _session_header_id(session_file) != session_id:
-        _refuse("omp session id mismatch", source=CONTEXT_SOURCE)
+        _refuse("context snapshot usage is malformed", source=source)
+    tokens = _finite_usage(usage.get("tokens"), name="tokens", positive=False, source=source)
+    window = _finite_usage(usage.get("context_window"), name="context_window", positive=True, source=source)
+
+    session_file: str | None = None
+    session_id: str | None = None
+    if not is_generic:
+        session_file = _canonical_session_file(parsed.get("omp_session_file"), CONTEXT_SOURCE)
+        session_id = parsed.get("omp_session_id")
+        if not isinstance(session_id, str) or not session_id:
+            _refuse("context snapshot session id is malformed", source=CONTEXT_SOURCE)
+        if _session_header_id(session_file) != session_id:
+            _refuse("omp session id mismatch", source=CONTEXT_SOURCE)
+    else:
+        raw_sf = parsed.get("session_file")
+        if raw_sf is not None:
+            session_file = _canonical_session_file(raw_sf, source)
+        raw_sid = parsed.get("session_id")
+        if raw_sid is not None:
+            if not isinstance(raw_sid, str) or not raw_sid:
+                _refuse("context snapshot session id is malformed", source=source)
+            session_id = raw_sid
+
     first_pane = _herdr_result("pane", "get", pane)
     first_proc = _herdr_result("pane", "process-info", "--pane", pane)
-    pane_token = _pane_view(first_pane, workspace, pane)
-    proc_token = _owning_pid(first_proc, pane)
+    pane_token = _pane_view(first_pane, workspace, pane, expected_harness=harness)
+    proc_token = _owning_pid(first_proc, pane, expected_harness=harness)
     if proc_token[1] != pid:
-        _refuse("owning pid is not the OMP foreground process", source=CONTEXT_SOURCE)
-    try:
-        live_file = os.path.realpath(pane_token[-1])
-    except OSError:
-        _refuse("live omp session file is unavailable", source=CONTEXT_SOURCE)
-    if live_file != session_file:
-        _refuse("omp session file mismatch", source=CONTEXT_SOURCE)
+        label = "OMP" if harness == "omp" else harness
+        _refuse(f"owning pid is not the {label} foreground process", source=source)
+    if not is_generic:
+        try:
+            live_file = os.path.realpath(pane_token[-1])
+        except OSError:
+            _refuse("live omp session file is unavailable", source=CONTEXT_SOURCE)
+        if live_file != session_file:
+            _refuse("omp session file mismatch", source=CONTEXT_SOURCE)
+    elif session_file is not None and pane_token[-1] is not None:
+        try:
+            live_file = os.path.realpath(pane_token[-1])
+        except OSError:
+            _refuse("live session file is unavailable", source=source)
+        if live_file != session_file:
+            _refuse("session file mismatch", source=source)
     if _read_snapshot_bytes(path) != blob:
-        _refuse("context snapshot changed during read", source=CONTEXT_SOURCE)
+        _refuse("context snapshot changed during read", source=source)
     if (
-        _pane_view(_herdr_result("pane", "get", pane), workspace, pane) != pane_token
-        or _owning_pid(_herdr_result("pane", "process-info", "--pane", pane), pane) != proc_token
+        _pane_view(_herdr_result("pane", "get", pane), workspace, pane, expected_harness=harness) != pane_token
+        or _owning_pid(_herdr_result("pane", "process-info", "--pane", pane), pane, expected_harness=harness) != proc_token
     ):
-        _refuse("pane identity changed during read", source=CONTEXT_SOURCE)
-    _require_fresh(observed)
-    return {
-        "source": CONTEXT_SOURCE,
+        _refuse("pane identity changed during read", source=source)
+    _require_fresh(observed, source=source)
+    result: dict[str, Any] = {
+        "harness": harness,
+        "source": source,
         "tokens": tokens,
         "context_window": window,
         "fraction": tokens / window,
         "snapshot": str(path),
         "observed_at_ms": observed,
-        "omp_session_file": session_file,
-        "omp_session_id": session_id,
         "model": {"provider": provider, "id": model_id},
     }
-
+    if session_file is not None:
+        result["session_file"] = session_file
+        if harness == "omp":
+            result["omp_session_file"] = session_file
+    if session_id is not None:
+        result["session_id"] = session_id
+        if harness == "omp":
+            result["omp_session_id"] = session_id
+    return result
 
 def require_context_usage(session: Path, holder: dict[str, str]) -> dict[str, Any]:
     evidence = read_context_usage(session, holder)
@@ -395,9 +460,9 @@ def require_context_usage(session: Path, holder: dict[str, str]) -> dict[str, An
     return evidence
 
 
-def _require_fresh(observed: int) -> None:
+def _require_fresh(observed: int, *, source: str | None = CONTEXT_SOURCE) -> None:
     age = _now_ms() - observed
     if age < 0:
-        _refuse("context snapshot is in the future", source=CONTEXT_SOURCE)
+        _refuse("context snapshot is in the future", source=source)
     if age > CONTEXT_MAX_AGE_MS:
-        _refuse("context snapshot is stale", source=CONTEXT_SOURCE)
+        _refuse("context snapshot is stale", source=source)

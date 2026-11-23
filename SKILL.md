@@ -6,9 +6,8 @@ license: MIT
 ---
 # Herdr Orchestrator
 
-One controller owns the task graph and durable run ledger (`events.jsonl`); workers execute slices.
-Use native `task`/`workflow` for bounded session-local work, `herdr-agent` for durable workers/isolated writers, and `pane` for existing user panes.
-
+One controller (any supported harness: `omp`, `claude`, `codex`, `copilot`, `pi`, `grok`, or custom CLI) owns the task graph and durable run ledger (`events.jsonl`); workers execute slices.
+Use the host harness's native subagent/task tool (`task`/`workflow`) for bounded session-local work, `herdr-agent` for durable workers/isolated writers, and `pane` for existing user panes.
 ## Choose the workflow first
 - **Bounded existing-pane work:** use native Herdr controls (`herdr agent prompt` in legacy Herdr, or `hc send`/`hc wait` in `herdr-core`). No graph or session scaffolding needed. See [native pane playbook](references/controller-playbook.md#native-existing-pane-playbook).
 - **Durable coordinated execution:** use `scripts/ho.py` below. It auto-resolves legacy Herdr (`HERDR_WORKSPACE_ID`/`HERDR_PANE_ID`) or `herdr-core` (`HC_TERMINAL_ID` via `hc`), canonical `session`/`run`, and current `epoch`, and drives the entire run through `ho next`.
@@ -34,13 +33,20 @@ Let `HO="python3 /absolute/skill/scripts/ho.py"`.
    `ho next` inspects replayed + live state and returns ONE JSON object:
    `{"phase": "...", "summary": "...", "nodes": {...}, "commands": [...]}`.
    Execute the exact verbatim commands returned in `commands`:
-   - `dispatch`: `$HO dispatch NODE --prompt-file FILE [--cwd DIR] [--model-role R]`
+   - `dispatch`: `$HO dispatch NODE --prompt-file FILE [--kind K] [--cwd DIR] [--model M | --model-role R] [--requested-effort E]`
    - `monitor`: `$HO monitor [--timeout S]` (run in background so controller stays free)
    - `finish`: `$HO finish NODE [--attempt A] [--force]`
    - `promote`: `$HO promote NODE [--attempt A]` (auto-resolves `new_sha` from receipts; no Python heredoc)
    - `retire`: `$HO retire --all`
    - `status`: `$HO status` (or `$HO next --reconcile` to run holder-authorized reconcile first)
 4. **Stop** when `ho next` reports `"phase": "done"`.
+
+## Multi-Harness Support
+Worker harness selection resolves in order: `--kind` CLI flag → `node.kind` in `graph.json` → `graph.default_kind` → `HERDR_ORCHESTRATOR_KIND` → `omp`.
+- Supported built-in kinds/aliases: `omp` (`oh-my-pi`), `claude` (`claude-code`), `codex` (`openai-codex`), `copilot` (`copilot-cli`), `pi`, `grok` (`grok-build`), plus any custom binary name.
+- Model/effort flags are translated per harness (`omp`/`pi`: `--model` + `--thinking`; `claude`: `--model` + `--effort`; `codex`: `-m` + `-c model_reasoning_effort=…`; `copilot`: `--model` + `--reasoning-effort`; `grok`: `--model`).
+- Role lookup (`--model-role`) uses `omp config get modelRoles --json` for `omp` and `~/.config/herdr-orchestrator/roles.json` for other harnesses (or pass `--model` directly).
+- Context rotation supports OMP (`extensions/herdr-context.ts`) and Claude Code (`scripts/claude-context-hook.py` writing schema v2 snapshots to `~/.local/state/herdr-orchestrator/context/`).
 
 ## Companion & Low-Level Scripts
 Use `ho.py` as the primary front-door. Specialized tools and all underlying low-level scripts remain directly callable when needed:

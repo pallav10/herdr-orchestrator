@@ -100,6 +100,7 @@ def main() -> int:
     parser.add_argument("--holder-pane", required=True)
     parser.add_argument("--epoch", type=int, required=True)
     parser.add_argument("--prompts-dir")
+    parser.add_argument("--kind", default=None, help="default worker harness kind for herdr-agent nodes")
     parser.add_argument("--max-parallel", type=_positive_int, default=None)
     parser.add_argument("--dry-run", action="store_true")
     cli_common.add_lock_timeout_arg(parser)
@@ -211,6 +212,8 @@ def main() -> int:
         ]
         if is_agent:
             argv.extend(["--prompt-file", entry["prompt_file"]])
+            if args.kind:
+                argv.extend(["--kind", args.kind])
         try:
             res = cli_common.run_child(argv, child_name)
         except cli_common.ChildFailed as exc:

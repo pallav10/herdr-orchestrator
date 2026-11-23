@@ -330,10 +330,11 @@ def main() -> int:
     parser.add_argument("--holder-workspace", default=None)
     parser.add_argument("--holder-pane", default=None)
     parser.add_argument("--epoch", type=int, default=None)
+    parser.add_argument("--kind", default=None, help="target harness kind for default --orchestrate behavior")
     orch = parser.add_mutually_exclusive_group()
     orch.add_argument("--orchestrate", action="store_true", dest="orchestrate")
     orch.add_argument("--no-orchestrate", action="store_false", dest="orchestrate")
-    parser.set_defaults(orchestrate=True)
+    parser.set_defaults(orchestrate=None)
     cli_common.add_lock_timeout_arg(parser)
     args = parser.parse_args()
 
@@ -355,7 +356,15 @@ def main() -> int:
             prompt = artifacts.prepare_dispatch_prompt(run, node_id, attempt, prompt or "")
         except (ioutil.UsageError, ioutil.PreconditionError) as exc:
             parser.error(str(exc))
-        prompt = prepare_prompt(prompt, orchestrate=args.orchestrate)
+        effective_orch = args.orchestrate
+        if effective_orch is None:
+            node_kind = args.kind or (node.get("kind") if isinstance(node.get("kind"), str) else None)
+            if node_kind is not None:
+                import harnesses
+                effective_orch = harnesses.get_spec(node_kind).orchestrate_default
+            else:
+                effective_orch = True
+        prompt = prepare_prompt(prompt, orchestrate=effective_orch)
         try:
             with authz.dispatch_guard(
                 run, node_id, int(attempt), holder=holder, epoch=epoch, continuation=continuation,
@@ -417,7 +426,14 @@ def main() -> int:
         except ioutil.UsageError as exc:
             parser.error(str(exc))
     else:
-        prompt = prepare_prompt(prompt, orchestrate=args.orchestrate)
+        effective_orch = args.orchestrate
+        if effective_orch is None:
+            if args.kind is not None:
+                import harnesses
+                effective_orch = harnesses.get_spec(args.kind).orchestrate_default
+            else:
+                effective_orch = True
+        prompt = prepare_prompt(prompt, orchestrate=effective_orch)
         try:
             deliver_prompt(herdr, args.name, prompt)
         except RuntimeError as exc:

@@ -120,9 +120,9 @@ from prompt_contract import prepare_prompt
 import artifacts
 import authz
 import graph_model
+import harnesses
 import ioutil
 import cli_common
-
 CLI_EXTRA_CODES = {RuntimeError: 1}
 import ledger
 from herdr_cli import deliver_prompt, herdr, stamp_workspace_tokens
@@ -132,39 +132,8 @@ from ioutil import atomic_text, first_str, payload_field
 from routing import routing_for, split_spec
 
 
-def resolve_role(role: str) -> str:
-    config = Path.home() / ".omp/agent/config.yml"
-    cache = Path.home() / ".omp/run/herdr-cache/model-roles.json"
-    try:
-        with config.open("rb") as fh:
-            mtime = config.stat().st_mtime_ns
-    except OSError:
-        mtime = None
-    roles = None
-    if mtime is not None:
-        try:
-            saved = json.loads(cache.read_text(encoding="utf-8"))
-            if (isinstance(saved, dict) and saved.get("config_mtime_ns") == mtime
-                    and isinstance(saved.get("roles"), dict)
-                    and all(isinstance(value, str) for value in saved["roles"].values())):
-                roles = saved["roles"]
-        except (OSError, ValueError, AttributeError):
-            pass
-    if roles is None:
-        proc = ioutil.run_cmd(["omp", "config", "get", "modelRoles", "--json"], capture_output=True, text=True)
-        if proc.returncode != 0:
-            raise RuntimeError(f"omp config get modelRoles failed: {proc.stderr.strip()}")
-        roles = json.loads(proc.stdout)["value"]
-        if mtime is not None:
-            try:
-                if config.stat().st_mtime_ns == mtime:
-                    cache.parent.mkdir(parents=True, exist_ok=True)
-                    ioutil.atomic_json(cache, {"config_mtime_ns": mtime, "roles": roles})
-            except OSError:
-                pass
-    if role not in roles:
-        raise RuntimeError(f"model role {role!r} not in modelRoles {sorted(roles)}")
-    return roles[role]
+def resolve_role(role: str, kind: str = "omp") -> str:
+    return harnesses.resolve_role_for_kind(kind, role, home=Path.home(), run_cmd=ioutil.run_cmd)
 
 
 def created_ids(result: dict[str, Any]) -> tuple[str, str]:
@@ -279,6 +248,8 @@ def load_contextual_spawn(context: tuple[Path, str, str], parser: argparse.Argum
         "integration": integration,
         "required_branch": integration_branch or graph_branch,
         "forbidden_worktree_paths": {repo, *prior_worktrees},
+        "kind": node.get("kind") if isinstance(node.get("kind"), str) and node.get("kind").strip() else None,
+        "graph_kind": graph.get("default_kind") if isinstance(graph.get("default_kind"), str) and graph.get("default_kind").strip() else None,
     }
 
 
@@ -738,7 +709,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("name")
     parser.add_argument("--cwd", default=None)
-    parser.add_argument("--kind", default="omp")
+    parser.add_argument("--kind", default=None, help="worker harness kind (omp, claude, codex, copilot, pi, grok, ...)")
     parser.add_argument("--branch", default=None, help="worktree branch; omitted => Herdr generates one")
     parser.add_argument("--base", default=None, help="worktree base ref (implies worktree create)")
     parser.add_argument("--path", default=None, help="worktree checkout path")
@@ -789,7 +760,14 @@ def main() -> int:
     marker_path = complete_path.with_name("prompt-attempt.json") if complete_path is not None else None
     plan = load_contextual_spawn(context, parser) if context else None
 
-    orchestrate = args.kind == "omp" if args.orchestrate is None else args.orchestrate
+    resolved_kind = harnesses.default_kind(
+        explicit=args.kind,
+        node_kind=plan.get("kind") if plan else None,
+        graph_kind=plan.get("graph_kind") if plan else None,
+    )
+    args.kind = resolved_kind
+    harness_spec = harnesses.get_spec(resolved_kind)
+    orchestrate = harness_spec.orchestrate_default if args.orchestrate is None else args.orchestrate
 
     prompt = args.prompt
     if args.prompt_file is not None:
@@ -829,19 +807,20 @@ def main() -> int:
     if prompt:
         prompt = prepare_prompt(prompt, orchestrate=orchestrate)
 
-    spec = args.model or (resolve_role(args.model_role) if args.model_role else None)
+    spec = args.model or (
+        (resolve_role(args.model_role) if resolved_kind == "omp" else resolve_role(args.model_role, resolved_kind))
+        if args.model_role else None
+    )
     model, thinking = split_spec(spec) if spec else ("", "")
     if spec:
-        provider, sep, leaf = model.partition("/")
-        if not (sep and provider and leaf):
-            origin = (
-                f"--model {args.model!r}" if args.model
-                else f"modelRoles[{args.model_role!r}] = {spec!r}"
-            )
-            parser.error(
-                f"{origin} must be provider/model[:thinking]; "
-                "bare aliases like 'slow'/'smol' are not models"
-            )
+        origin = (
+            f"--model {args.model!r}" if args.model
+            else f"modelRoles[{args.model_role!r}] = {spec!r}"
+        )
+        try:
+            harnesses.validate_model_spec(resolved_kind, model, origin=origin)
+        except ValueError as exc:
+            parser.error(str(exc))
 
     use_worktree = bool(args.branch or args.path or args.base)
 
@@ -931,10 +910,14 @@ def main() -> int:
                     raise RuntimeError(f"contextual worktree branch must be {plan['required_branch']}")
 
                 start = ["agent", "start", agent_target, "--kind", args.kind, "--pane", pane]
-                if model:
-                    start += ["--", "--model", model]
-                    if thinking:
-                        start += ["--thinking", thinking]
+                model_argv = harnesses.build_model_argv(
+                    args.kind,
+                    model=model,
+                    thinking=thinking,
+                    effort=args.requested_effort or "",
+                )
+                if model_argv:
+                    start += ["--", *model_argv]
                 not_ready = False
                 for attempt in range(args.retries):
                     try:

@@ -420,7 +420,7 @@ def assistant_text(content: object) -> str:
     for part in content:
         if not isinstance(part, dict):
             continue
-        if part.get("type") != "text":
+        if part.get("type") not in ("text", "output_text"):
             continue
         text = part.get("text")
         if isinstance(text, str) and text.strip():
@@ -455,8 +455,10 @@ def parse_session_summary(session_path: Path) -> str:
                     continue
                 if not isinstance(row, dict):
                     continue
-                msg = row.get("message", row)
-                if not isinstance(msg, dict) or msg.get("role", row.get("role", row.get("type"))) != "assistant":
+                msg = row.get("message") if isinstance(row.get("message"), dict) else (
+                    row.get("payload") if isinstance(row.get("payload"), dict) else row
+                )
+                if msg.get("role", row.get("role", row.get("type"))) != "assistant":
                     continue
                 text = assistant_text(msg.get("content"))
                 if text:
