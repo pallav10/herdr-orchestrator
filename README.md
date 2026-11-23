@@ -8,7 +8,7 @@
 
 *Dependency graphs, isolated Git worktrees, ownership gates, receipt-backed promotion, and seamless controller rotation across **OMP, Claude Code, Codex, Copilot CLI, Pi, Grok Build**, and custom CLI harnesses — built on zero-dependency Python stdlib.*
 
-[![Version](https://img.shields.io/badge/version-2.0.0-6366F1?style=flat-square)](package.json)
+[![Version](https://img.shields.io/badge/version-2.0.1-6366F1?style=flat-square)](package.json)
 [![Python](https://img.shields.io/badge/python-3%20stdlib%20only-38BDF8?style=flat-square&logo=python&logoColor=white)](#requirements)
 [![Harnesses](https://img.shields.io/badge/harnesses-OMP%20%7C%20Claude%20%7C%20Codex%20%7C%20Copilot%20%7C%20Pi%20%7C%20Grok-10B981?style=flat-square)](#supported-harnesses)
 [![Backends](https://img.shields.io/badge/backends-herdr%20%7C%20herdr--core%20(hc)-8B5CF6?style=flat-square)](#requirements)

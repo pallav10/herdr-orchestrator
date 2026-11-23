@@ -4574,7 +4574,7 @@
         <text x="54" y="74" class="t-dim" font-size="10" font-weight="600">01 / Controller pane (lease holder)</text>
 
         <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-1" x="40" y="176" width="640" height="104" rx="10" class="c-lane" stroke-width="1"/>
-        <text x="54" y="198" class="t-dim" font-size="10" font-weight="600">02 / Run ledger  docs/runs/&lt;run-id&gt;</text>
+        <text x="54" y="198" class="t-dim" font-size="10" font-weight="600">02 / Run store  ~/.local/state/herdr-orchestrator/runs/&lt;run-id&gt;</text>
 
         <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-2" x="40" y="300" width="640" height="104" rx="10" class="c-lane" stroke-width="1"/>
         <text x="54" y="322" class="t-dim" font-size="10" font-weight="600">03 / Dispatch scripts (controller-side)</text>
@@ -4618,15 +4618,15 @@
         <path data-edge-from="rotate" data-edge-to="init" data-edge-label="ack-handoff.py" data-edge-key="11" data-edge-id="rotate-init" data-composition-points="88,589;88,352;88,352;88,145" d="M 88 589 L 88 352 L 88 352 L 88 145" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
 
         <!-- Nodes -->
-        <g id="node-init" data-node-id="init" data-node-label="init-docs.py" tabindex="0" role="button" aria-label="Focus init-docs.py, session to run bind, Controller pane (lease holder) › Open + plan" aria-pressed="false" data-node-kind="backend" data-node-sublabel="session to run bind" data-node-context="Controller pane (lease holder) › Open + plan">
-          <title>init-docs.py · session to run bind · Controller pane (lease holder) › Open + plan</title>
+        <g id="node-init" data-node-id="init" data-node-label="ho.py init" tabindex="0" role="button" aria-label="Focus ho.py init, XDG run.db + index.db, Controller pane (lease holder) › Open + plan" aria-pressed="false" data-node-kind="backend" data-node-sublabel="XDG run.db + index.db" data-node-context="Controller pane (lease holder) › Open + plan">
+          <title>ho.py init · XDG run.db + index.db · Controller pane (lease holder) › Open + plan</title>
           <rect x="42" y="93" width="92" height="52" rx="6" class="c-mask"/>
           <rect x="42" y="93" width="92" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(48 99) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-detail-anchor x="88" y="114" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">init-docs.py</text>
-          <text data-detail="context" x="88" y="131" class="t-muted" font-size="7.3" text-anchor="middle">session to run bind</text>
+          <text data-detail-anchor x="88" y="114" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ho.py init</text>
+          <text data-detail="context" x="88" y="131" class="t-muted" font-size="7.3" text-anchor="middle">XDG run.db + index.db</text>
         </g>
 
         <g id="node-graph" data-node-id="graph" data-node-label="accept_graph" tabindex="0" role="button" aria-label="Focus accept_graph, owns, base_sha, ref, Controller pane (lease holder) › Open + plan" aria-pressed="false" data-node-kind="backend" data-node-sublabel="owns, base_sha, ref" data-node-context="Controller pane (lease holder) › Open + plan">
@@ -4652,15 +4652,15 @@
           <text data-detail="context" x="625" y="131" class="t-muted" font-size="7.3" text-anchor="middle">CAS herdr/&lt;run&gt; ref</text>
         </g>
 
-        <g id="node-events" data-node-id="events" data-node-label="events.jsonl" tabindex="0" role="button" aria-label="Focus events.jsonl, run.lock + epoch gate, Run ledger  docs/runs/&lt;run-id&gt; › Dispatch + spawn" aria-pressed="false" data-node-kind="database" data-node-sublabel="run.lock + epoch gate" data-node-context="Run ledger  docs/runs/&lt;run-id&gt; › Dispatch + spawn">
-          <title>events.jsonl · run.lock + epoch gate · Run ledger  docs/runs/&lt;run-id&gt; › Dispatch + spawn</title>
+        <g id="node-events" data-node-id="events" data-node-label="run.db (WAL)" tabindex="0" role="button" aria-label="Focus run.db (WAL), run.lock + epoch gate, Run store ~/.local/state/herdr-orchestrator/runs/&lt;run-id&gt; › Dispatch + spawn" aria-pressed="false" data-node-kind="database" data-node-sublabel="run.lock + epoch gate" data-node-context="Run store ~/.local/state/herdr-orchestrator/runs/&lt;run-id&gt; › Dispatch + spawn">
+          <title>run.db (WAL) · run.lock + epoch gate · Run store ~/.local/state/herdr-orchestrator/runs/&lt;run-id&gt; › Dispatch + spawn</title>
           <rect x="254" y="217" width="92" height="52" rx="6" class="c-mask"/>
           <rect x="254" y="217" width="92" height="52" rx="6" class="c-database" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(260 223) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-detail-anchor x="300" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">events.jsonl</text>
+          <text data-detail-anchor x="300" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">run.db (WAL)</text>
           <text data-detail="context" x="300" y="255" class="t-muted" font-size="6.6" text-anchor="middle">run.lock + epoch gate</text>
         </g>
 

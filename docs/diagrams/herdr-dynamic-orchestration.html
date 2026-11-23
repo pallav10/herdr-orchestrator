@@ -4619,17 +4619,17 @@
         <text data-detail="fine" x="372" y="112" class="t-security" font-size="7" text-anchor="middle">rotation-safe</text>
         </g>
 
-        <g id="node-event_log" data-node-id="event_log" data-node-label="events.jsonl" tabindex="0" role="button" aria-label="Focus events.jsonl, append-only authority, Stable absolute run directory · gitignored execution authority" aria-pressed="false" data-node-kind="database" data-node-sublabel="append-only authority" data-node-tag="fsync before cache" data-node-context="Stable absolute run directory · gitignored execution authority">
-          <title>events.jsonl · append-only authority · Stable absolute run directory · gitignored execution authority · fsync before cache</title>
+        <g id="node-event_log" data-node-id="event_log" data-node-label="run.db (WAL)" tabindex="0" role="button" aria-label="Focus run.db (WAL), SQLite ACID ledger, XDG per-run store · events + notes + blobs" aria-pressed="false" data-node-kind="database" data-node-sublabel="SQLite ACID ledger" data-node-tag="events + notes + blobs" data-node-context="XDG per-run store · events + notes + blobs">
+          <title>run.db (WAL) · SQLite ACID ledger · XDG per-run store · events + notes + blobs</title>
           <rect x="574" y="60" width="120" height="60" rx="6" class="c-mask"/>
           <rect x="574" y="60" width="120" height="60" rx="6" class="c-database" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(580 66) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-detail-anchor x="634" y="88" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">events.jsonl</text>
-        <text data-detail="context" x="634" y="104" class="t-muted" font-size="8.8" text-anchor="middle">append-only authority</text>
-        <text data-detail="fine" x="634" y="112" class="t-database" font-size="7" text-anchor="middle">fsync before cache</text>
+          <text data-detail-anchor x="634" y="88" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">run.db (WAL)</text>
+        <text data-detail="context" x="634" y="104" class="t-muted" font-size="8.8" text-anchor="middle">SQLite ACID ledger</text>
+        <text data-detail="fine" x="634" y="112" class="t-database" font-size="7" text-anchor="middle">events + notes + blobs</text>
         </g>
 
         <g id="node-reconcile" data-node-id="reconcile" data-node-label="State Compiler" tabindex="0" role="button" aria-label="Focus State Compiler, reconcile.py, Stable absolute run directory · gitignored execution authority" aria-pressed="false" data-node-kind="backend" data-node-sublabel="reconcile.py" data-node-tag="deterministic replay" data-node-context="Stable absolute run directory · gitignored execution authority">
@@ -4995,9 +4995,9 @@
           <h3>Authority Split</h3>
         </div>
         <ul>
-          <li>&bull; events.jsonl is authoritative; state.json and controller.json are rebuilt caches</li>
-          <li>&bull; Session docs are pane history and handoff text, never the execution ledger</li>
-          <li>&bull; Only the current workspace + pane + concrete session holder may mutate</li>
+          <li>&bull; run.db (SQLite WAL) under XDG state is authoritative; events, projections, and notes commit atomically</li>
+          <li>&bull; Structured notes in run.db replace mutable .md handoff files; index.db is a rebuildable pane lookup</li>
+          <li>&bull; Only the current workspace + pane + epoch session holder may mutate</li>
         </ul>
       </div>
 

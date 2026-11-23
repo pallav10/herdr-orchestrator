@@ -340,11 +340,11 @@
       "title": "Plan: make the engineering contract explicit",
       "items": [
         "Controller investigates the target repository and defines scope, acceptance criteria, non-goals, interfaces and runnable verification before dispatch.",
-        "init-docs.py binds canonical session/run paths under the target docs root. docs/sessions/ and docs/runs/ must be Git-ignored.",
+        "ho.py init creates/reuses a per-run SQLite WAL database under XDG state (~/.local/state/herdr-orchestrator/runs/<run-id>/run.db) and binds the pane in index.db. Zero repo .gitignore or .md files required.",
         "accept_graph(run, graph, repo, holder) pins repo, immutable base_sha and refs/heads/herdr/<run-id>; validates nodes, aliases, dependencies, cycles and concurrent path ownership.",
         "depends_on controls ordering; inputs declares exact consumed outputs. Ordering alone neither transfers code nor records artifact consumption.",
         "Represent verification/review responsibilities explicitly in prompts and graph dependencies. There is no mandatory hardcoded PLAN/IMPLEMENT/VERIFY/REVIEW pipeline.",
-        "Source: scripts/init-docs.py:57-101; scripts/run_state.py:301-402,659-717."
+        "Source: scripts/ho.py; scripts/state_paths.py; scripts/run_store.py; scripts/ledger.py."
       ]
     },
     {
@@ -402,7 +402,7 @@
       "dot": "slate",
       "title": "Authority, routing and recovery across every phase",
       "items": [
-        "events.jsonl is execution authority. state.json, controller.json and status.md are derived caches; progress/HANDOFF/NEXT are orientation and handoff notes, not success markers.",
+        "run.db (SQLite WAL) is execution authority. Structured notes in run.db and dynamic prompt synthesis replace mutable .md files; Herdr idle/done are not success markers.",
         "Native task/workflow executors are bounded and session-local; herdr-agent workers survive controller rotation; pane executors address existing user-owned surfaces and are never retired.",
         "A live blocked worker may resume the same attempt after exact identity/token verification. The controller appends the returned attempt_started descriptor; do not create a second launch intent.",
         "Failed/interrupted/invalidated retries use a new authorized attempt and immutable attempt directory. Native failed/interrupted retry additionally requires side_effect_safe=true.",

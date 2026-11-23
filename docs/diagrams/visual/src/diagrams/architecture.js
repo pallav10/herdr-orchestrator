@@ -11,9 +11,9 @@ HerdrVisual.diagrams.push({
       "dot": "cyan",
       "title": "Authority Split",
       "items": [
-        "events.jsonl is authoritative; state.json and controller.json are rebuilt caches",
-        "Session docs are pane history and handoff text, never the execution ledger",
-        "Only the current workspace + pane + concrete session holder may mutate"
+        "run.db (SQLite WAL) under XDG state is authoritative; events, projections, and notes commit atomically",
+        "Structured notes in run.db replace mutable .md handoff files; index.db is a rebuildable pane lookup",
+        "Only the current workspace + pane + epoch session holder may mutate"
       ]
     },
     {

@@ -25,7 +25,7 @@
         "id": "authority",
         "label": "State authority",
         "focus": ["events", "sidecars", "promote"],
-        "note": "events.jsonl under run.lock is the only mutation authority; caches are replayed."
+        "note": "run.db (SQLite WAL) under run.lock is the only mutation authority; projections update atomically."
       },
       {
         "id": "rotation",
@@ -38,7 +38,7 @@
   },
   "lanes": [
     { "id": "controller", "label": "Controller pane (lease holder)" },
-    { "id": "ledger", "label": "Run ledger  docs/runs/<run-id>" },
+    { "id": "ledger", "label": "Run store  ~/.local/state/herdr-orchestrator/runs/<run-id>" },
     { "id": "scripts", "label": "Dispatch scripts (controller-side)" },
     { "id": "herdr", "label": "Herdr server + worker pane" },
     { "id": "recovery", "label": "Blocked + rotation", "variant": "exception" },
@@ -51,10 +51,10 @@
   ],
   "mainPath": ["init", "graph", "dispatch", "spawn", "worker", "monitor", "finish", "promote"],
   "nodes": [
-    { "id": "init", "lane": "controller", "col": 0, "type": "backend", "label": "init-docs.py", "sublabel": "session to run bind" },
+    { "id": "init", "lane": "controller", "col": 0, "type": "backend", "label": "ho.py init", "sublabel": "XDG run.db + index.db" },
     { "id": "graph", "lane": "controller", "col": 1, "type": "backend", "label": "accept_graph", "sublabel": "owns, base_sha, ref" },
     { "id": "promote", "lane": "controller", "col": 5, "type": "security", "label": "promote()", "sublabel": "CAS herdr/<run> ref" },
-    { "id": "events", "lane": "ledger", "col": 2, "type": "database", "label": "events.jsonl", "sublabel": "run.lock + epoch gate" },
+    { "id": "events", "lane": "ledger", "col": 2, "type": "database", "label": "run.db (WAL)", "sublabel": "run.lock + epoch gate" },
     { "id": "sidecars", "lane": "ledger", "col": 3, "type": "database", "label": "sidecars", "sublabel": "intent, identity, done" },
     { "id": "dispatch", "lane": "scripts", "col": 2, "type": "backend", "label": "dispatch-agent", "sublabel": "epoch, dispatch_intent", "width": 100 },
     { "id": "spawn", "lane": "scripts", "col": 3, "type": "backend", "label": "spawn-agent", "sublabel": "create, start, prompt" },
@@ -94,9 +94,9 @@
       "dot": "violet",
       "title": "Authority (run_state.py)",
       "items": [
-        "events.jsonl is the only mutation authority; run.lock is fcntl exclusive",
+        "run.db (SQLite WAL) is the sole mutation authority; run.lock is fcntl exclusive for external side effects",
         "Every append checks holder lease and event.epoch == controller.epoch",
-        "state.json, controller.json, status.md are replayed caches",
+        "events, controller, state, graph, and notes update in one ACID transaction; blobs/<sha256> holds large payloads",
         "Node states: planned ready running blocked succeeded failed interrupted skipped invalidated",
         "promote: promotion_intent, git update-ref CAS, promoted, succeeded"
       ]

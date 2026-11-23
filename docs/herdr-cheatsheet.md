@@ -812,12 +812,12 @@ Sources are marked: **(help)** from `--help`, **(skill)** from `herdr --skill`, 
 
 Everything below is **not Herdr**. These Python 3 adapters wrap the Herdr CLI for a controller pane. Authority is [SKILL.md](../SKILL.md); session/run contracts are [session-docs.md](../references/session-docs.md), practical examples [controller-playbook.md](../references/controller-playbook.md), and isolation guidance [pane-environment.md](../references/pane-environment.md). Situational contracts: [identity/reattachment](../references/identity-reattach.md), [rotation](../references/rotation.md), [receipts/promotion/retirement](../references/retire-promote.md), and [run-state/output API](../references/run-state-api.md).
 
-All lock-taking adapter syntaxes below additionally accept `--lock-timeout SECONDS`: `ho.py`, `init-docs`, `accept-graph`, `dispatch-agent`, `dispatch-wave`, `run-script`, `spawn-agent`, `prompt-agent`, `collect-agent`, `finish-agent`, `promote-run`, `invalidate-node`, `retire-agents`, `rotate`, `ack-handoff`, `reconcile`, and `prune-run`. The approved fallback requires finite positive seconds (default 120; invalid input exit 2, acquisition timeout refusal exit 3), preserves every exclusive critical section including launch/close, and treats `run.lock.owner` as unverified diagnostics only. It does not implement concurrent dispatch; see the [locking contract](../references/run-state-api.md#events-locking-and-dispatch).
+All lock-taking adapter syntaxes below additionally accept `--lock-timeout SECONDS`: `ho.py`, `accept-graph`, `dispatch-agent`, `dispatch-wave`, `run-script`, `spawn-agent`, `prompt-agent`, `collect-agent`, `finish-agent`, `promote-run`, `invalidate-node`, `retire-agents`, `rotate`, `ack-handoff`, `reconcile`, and `prune-run`. The approved fallback requires finite positive seconds (default 120; invalid input exit 2, acquisition timeout refusal exit 3), preserves every exclusive critical section including launch/close, and treats `run.lock.owner` as unverified diagnostics only. It does not implement concurrent dispatch; see the [locking contract](../references/run-state-api.md#events-locking-and-dispatch).
 
 ### Rules that never bend
 
-- State authority: `docs/runs/<run-id>/events.jsonl` is append-only and authoritative. `state.json`, `controller.json`, `status.md` are caches. Session prose, `progress.md`, and Herdr `idle`/`done` are **not** success. See [Authority](../references/session-docs.md#authority).
-- Persist and pass the canonical absolute `run` and `session` paths printed by `scripts/init-docs.py`. Never use `latest` or a relative `docs/...` path; never write through `latest`. Ignore `docs/sessions` and `docs/runs` in the target repo (they must be Git-ignored; `init-docs.py` checks).
+- State authority: `<state_root>/runs/<run-id>/run.db` (SQLite WAL, default `${XDG_STATE_HOME:-~/.local/state}/herdr-orchestrator/`, overridable via `HERDR_ORCHESTRATOR_STATE_DIR`) is authoritative (`events` table + atomic `kv`/`notes` projections). `index.db` is a rebuildable pane/repo lookup cache. Zero `.gitignore` edits and zero `.md` handoff files are written. Herdr `idle`/`done` is **not** success. See [Authority](../references/session-docs.md#authority).
+- Initialize runs with `python3 scripts/ho.py init --job <name>`. Controller session IDs are epoch-scoped (`epoch-1`, `epoch-2`, ...).
 - Contextual dispatch needs `--run` plus the exact holder triple (`--session`, `--holder-workspace`, `--holder-pane`) and the current `--epoch` — **necessary, not sufficient**: the holder must also be the exact **active** lease holder, dispatch must be enabled, the attempt must match, and the node must be ready. While the lease is `draining` (rotation) `dispatch_intent`/`dispatched` are refused, and `collect`/`finish`/`retire` also refuse a draining lease (they require the active holder) even though the library lets a few event types through when draining (`blocked`, `failed`, `interrupted`, `invalidated`, `notification_sent`, `promoted`, `promotion_intent`, `skipped`, `succeeded`). `lease_transfer` **increments the epoch**: after a handoff never reuse the predecessor's epoch. Holder keys are exactly `workspace`, `pane`, `session` (the canonical absolute session path).
 - Concurrent writers own **disjoint paths**; overlapping slices serialize. Writers run in Herdr worktrees; integrators in separate worktrees; promotion targets the run-owned ref only. Every explicit VCS consumer matters before close: promoted `integration.json` for integration-output consumers; current same-attempt controller success and a matching immutable consumed snapshot/digest for others. Workspace close retains Git worktrees and branches.
 - Managed workers are addressed by `worker_id` (`fo-` + 24 hex), never by the friendly `--name` alias, label, or sidebar position. Identity uncertain ⇒ block, never adopt.
@@ -843,7 +843,7 @@ All lock-taking adapter syntaxes below additionally accept `--lock-timeout SECON
 | `dispatch-agent.py --retries` / `--retry-delay` | default none: omitted flags are not passed, so spawn's defaults apply |
 | `rotate.py --timeout` | seconds, default 300, must be `> 0`; bounds the native-quiescence wait **and** the ack poll (5 s poll interval) |
 | `rotate.py --label` / `--model-role` | defaults `successor` / `default`; label must match `^[a-z][a-z0-9_-]{0,31}$` |
-| `init-docs.py --dir` / `--job` | defaults `docs` / working-directory name |
+| `ho.py init --job` | creates/reuses an XDG SQLite WAL run (`--repo` auto-detected from cwd; `--new` forces a new run) |
 | `spawn-agent.py --kind` | default `omp`; a leading bare `orchestrate` line is prepended iff kind is `omp`, unless `--orchestrate`/`--no-orchestrate` is given. `prompt-agent.py`: prepend is on by default. `dispatch-agent.py`: passes the flag only when you set it |
 | `collect-agent.py` summary stdout | 1,500 characters; `summary_truncated: true` when cut; `--full-summary` disables cap; contextual `summary.json` retains full text |
 | worktree creation in `spawn-agent.py` | happens when **any** of `--branch`, `--base`, `--path` is given |
@@ -857,7 +857,7 @@ Spawn and prompt share one `deliver_prompt` call and one full-text submission. O
 
 | Adapter | Purpose | Exit codes |
 |---|---|---|
-| `scripts/init-docs.py` | open/reuse session docs and bind a run | 0 ok, 1 runtime, 2 usage, 3 precondition/refusal |
+| `scripts/ho.py` | unified CLI front-door (`init`, `accept`, `next`, `dispatch`, `monitor`, `finish`, `promote`, `retire`, `status`, `note`, `brief`, `rotate`, `ack`) | 0 ok, 1 runtime, 2 usage, 3 precondition/refusal |
 | `scripts/reconcile.py` | replay and repair caches; observe/derive lifecycle | 0, 1, 2, 3 |
 | `scripts/dispatch-agent.py` | spawn a ready `herdr-agent` node (idempotent) | 0 ok, 1 runtime, 2 usage, 3 precondition |
 | `scripts/spawn-agent.py` | create workspace/worktree, pane, agent, deliver prompt | 0 ok, 1 herdr/omp failure, 2 bad arguments, 3 precondition/refusal |
@@ -870,18 +870,19 @@ Spawn and prompt share one `deliver_prompt` call and one full-text submission. O
 | `scripts/rotate.py` | measured controller rotation; see [rotation gate](../references/rotation.md#measured-context-gate) | 0, 1, 2, 3 domain condition (including context refusal and unacked) |
 | `scripts/ack-handoff.py` | successor validates predecessor and transfers lease | 0, 1 runtime, 2 usage, 3 metadata/holder/nonce/lineage precondition |
 
-Shared modules without a CLI: `scripts/herdr_cli.py`, `scripts/session_docs.py`, and `scripts/run_state.py`. `scripts/prompt_contract.py` has a runnable assertion self-check. `scripts/ownership.py` is also executable; `check-ownership.py` delegates to the same `main()` and is the documented controller entry point.
+Shared modules without a CLI: `scripts/herdr_cli.py`, `scripts/state_paths.py`, `scripts/run_store.py`, and `scripts/run_state.py`. `scripts/prompt_contract.py` has a runnable assertion self-check. `scripts/ownership.py` is also executable; `check-ownership.py` delegates to the same `main()` and is the documented controller entry point.
 
 ### Per-adapter syntax
 
-#### scripts/init-docs.py
+#### scripts/ho.py init / note / brief
 
 ```text
-python3 scripts/init-docs.py [--dir DIR] [--job JOB] [--new] [--run RUN]
+python3 scripts/ho.py init --job JOB [--repo PATH] [--new] [--run RUN] [--pane TARGET ...]
+python3 scripts/ho.py note add --kind decision|contract|blocker|focus|gotcha|handoff "TEXT"
+python3 scripts/ho.py brief [--md]
 ```
 
-Opens a session under `DIR/sessions/<id>/` (`--dir` default `docs`, `--job` default the working-directory name). Reuses a session only for this pane's workspace/pane identity and job; outside Herdr every run opens a fresh session; `--new` always does. A conflicting or relative `--run` is refused (exit 3). Prints one JSON line: `session`, `id`, `job`, `owner`, `parent`, `reused`, `source`, `run`, `files`. Save the printed absolute `session` and `run`. `docs/sessions/latest` is an informational pointer that nothing reads: never resolve or write through it.
-
+Initializes or reuses a per-run SQLite WAL database under `${XDG_STATE_HOME:-~/.local/state}/herdr-orchestrator/runs/<run-id>/run.db` (zero repo `.gitignore` rules, zero `.md` files) and registers `(workspace, pane)` in rebuildable `index.db`. `ho note add` records structured handoff memory into `run.db`; `ho brief [--md]` synthesizes the run + handoff brief on demand.
 #### scripts/reconcile.py
 
 ```text
@@ -977,18 +978,18 @@ Closes only orchestrator-created workspaces (`herdr workspace close` is the only
 #### scripts/rotate.py
 
 ```text
-python3 scripts/rotate.py --session PATH [--label LABEL] [--model-role ROLE] [--timeout N]
+python3 scripts/rotate.py --run RUN [--focus TEXT] [--label LABEL] [--kind KIND] [--model-role ROLE | --model MODEL] [--timeout N]
 ```
 
-Spawns and verifies a successor without retiring the predecessor. Requires exact predecessor surface identity, canonical same-docs-root run metadata, and readable `HANDOFF.md`/`NEXT-SESSION-PROMPT.md` before drain/spawn. Metadata is the sole run locator: no markdown Run equality, progress prerequisite, document-age flag, or handoff-mtime token. Measured context freshness and occupancy gate remain enforced; see [rotation.md](../references/rotation.md). Rotation owns native drain and tokenized ack; do not pre-drain. An unacked successor leaves the lease draining, prints `"acked": false`, and exits 3. Preserve exact nonce transfer and same-nonce recovery; reattach live workers rather than redispatching.
+Spawns and verifies a successor without retiring the predecessor. Validates exact active holder and measured context occupancy (`>= 50%`), appends `lease_drain_started` (with optional `--focus` handoff summary), waits for native quiescence, synthesizes a self-contained successor bootstrap prompt directly from `run.db` state and notes (zero `.md` files), spawns the successor with a fresh nonce, and polls for matching ledger transfer + workspace tokens. An unacked successor leaves the lease draining, prints `"acked": false`, and exits 3. See [rotation.md](../references/rotation.md).
 
 #### scripts/ack-handoff.py
 
 ```text
-python3 scripts/ack-handoff.py --nonce N --session PATH
+python3 scripts/ack-handoff.py --nonce N --run RUN
 ```
 
-Run inside the successor pane with the exact nonce and concrete predecessor path from rotation. Canonical predecessor session/run metadata and required HANDOFF/NEXT bootstrap resources must be valid; missing/invalid/noncanonical/conflicting/out-of-root metadata is exit 3. No progress prerequisite, parsed markdown run locator/equality, note-age gate, or handoff-mtime stamp remains. Lease must be draining and exact holder, nonce and lineage must match. A single `lease_transfer` advances epoch; same-nonce recovery reuses the transferred successor without a second session or transfer. Stamp `handoff-ack` and successor `session` metadata. Prints `acked`, `workspace`, `nonce`, canonical `session`, `session_id`, `parent`, and `run`. See [rotation.md](../references/rotation.md#drain-acknowledgment-and-stand-down).
+Run inside the successor pane with the exact nonce and canonical run path from rotation. Validates the draining predecessor holder, advances the epoch (`epoch-<N+1>`), appends a single `lease_transfer`, updates XDG `index.db`, and stamps `handoff-ack` + `session=epoch-<N+1>` workspace tokens. Same-nonce recovery after a stamp failure is idempotent without a second transfer. Prints `acked`, `workspace`, `nonce`, `session`, `session_id`, `parent`, and `run`. See [rotation.md](../references/rotation.md).
 
 ### run_state library calls
 
@@ -1001,14 +1002,14 @@ Python APIs in `scripts/run_state.py` (not a CLI) that the flow below calls:
 | `deliver_branch(run, *, repo, holder=None, branch=None, lock_timeout=120)` | Create-only human branch after the whole graph is `succeeded`/`skipped`; refuses `refs/heads/herdr/<run-id>`. |
 | `replay(run)` | `{state, controller, events, skipped_stale, truncated_tail}` |
 | `append_event(run, event, *, holder=None, lock_timeout=120)` | `{state, controller, event}` |
-| `claim_run(docs_root, job, *, created=None)` | Used by session binding, not a controller step. |
+| `claim_run(docs_root=None, job="", *, storage="auto", repo=None, state_dir=None)` | Creates a SQLite WAL run under XDG state (default when `docs_root=None`) and registers it in `index.db`. |
 
 Promotion recovery is `scripts/reconcile.py --run RUN --repo REPO` plus the holder flags, not a separate CLI.
 
 ### Typical controller flow
 
-1. `scripts/init-docs.py` → keep the printed `session` and `run`.
-2. Accept the graph through `run_state.accept_graph(...)` (library call; see [`../SKILL.md`](../SKILL.md)).
+1. `scripts/ho.py init --job JOB` → creates/reuses XDG SQLite run and binds pane in `index.db`.
+2. `scripts/ho.py accept --graph graph.json` (or `run_state.accept_graph(...)`).
 3. `scripts/reconcile.py --run RUN` (add holder flags to observe).
 4. `scripts/dispatch-agent.py ...` per ready `herdr-agent` node; ready `pane` nodes and blocked continuations use `scripts/prompt-agent.py` (same attempt, no second launch intent).
 5. `scripts/monitor-agents.py ... --notify-pane CONTROLLER_PANE` in the background.
@@ -1016,10 +1017,10 @@ Promotion recovery is `scripts/reconcile.py --run RUN --repo REPO` plus the hold
 7. `scripts/retire-agents.py ...` only after receipts, and only orchestrator-created surfaces.
 8. `scripts/rotate.py` / `scripts/ack-handoff.py` use the [measured rotation gate](../references/rotation.md#measured-context-gate); do not bypass refusal or redispatch still-live workers.
 
-Syntax prototype with placeholders only (all values come from `init-docs.py`, the graph, and the rotate prompt; never guess a path or epoch):
+Syntax prototype with placeholders only (prefer `scripts/ho.py` for auto-context; low-level adapters accept explicit flags):
 
 ```text
-python3 scripts/init-docs.py --dir docs --job JOB
+python3 scripts/ho.py init --job JOB
 python3 scripts/reconcile.py --run "$RUN" --session "$SESSION" \
   --holder-workspace "$HERDR_WORKSPACE_ID" --holder-pane "$HERDR_PANE_ID"
 python3 scripts/dispatch-agent.py --run "$RUN" --node NODE --session "$SESSION" \
@@ -1034,8 +1035,8 @@ python3 scripts/finish-agent.py --run "$RUN" --node NODE --attempt 1 --session "
 python3 scripts/check-ownership.py --run "$RUN" --node NODE
 python3 scripts/retire-agents.py "$WORKER_ID" --run "$RUN" --session "$SESSION" \
   --holder-workspace "$HERDR_WORKSPACE_ID" --holder-pane "$HERDR_PANE_ID"
-python3 scripts/rotate.py --session "$SESSION"
-python3 scripts/ack-handoff.py --nonce "$NONCE" --session "$PREDECESSOR_SESSION"
+python3 scripts/rotate.py --run "$RUN" --focus "Current handoff focus"
+python3 scripts/ack-handoff.py --nonce "$NONCE" --run "$RUN"
 ```
 
 Port and shared-infrastructure isolation: [Per-pane ports](../references/pane-environment.md#per-pane-ports) and [Shared infrastructure vs isolated processes](../references/pane-environment.md#shared-infrastructure-vs-isolated-processes). Practical commands: [Controller playbook](../references/controller-playbook.md#5-herdr-commands-used-by-the-controller).
