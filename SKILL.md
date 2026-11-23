@@ -55,11 +55,11 @@ Use `ho.py` as the primary front-door. Specialized tools and all underlying low-
 - **Planning & preflight:** `validate-graph.py` (Tarjan SCC cycles, ownership overlaps, waves), `render-graph.py` (`references/templates/graphs/`), `doctor.py` (env/git/Herdr preflight).
 - **Waves, scripts & control:** `dispatch-wave.py` (critical-path/fan-out wave dispatch), `run-script.py` (deterministic `script` nodes), `invalidate-node.py` (selective cascade rerun + `feedback.md`).
 - **Inspection & lifecycle:** `inspect-run.py` (timeline + next actions), `run-metrics.py` (durations/retries/tokens), `prune-run.py` (fail-closed worktree/ref GC).
-- **Core adapters:** `init-docs.py`, `accept-graph.py`, `dispatch-agent.py`, `spawn-agent.py`, `prompt-agent.py`, `reconcile.py`, `monitor-agents.py`, `collect-agent.py`, `check-ownership.py`, `finish-agent.py`, `promote-run.py`, `retire-agents.py`, `rotate.py`, `ack-handoff.py`, `run_state.py`.
+- **Core adapters:** `accept-graph.py`, `dispatch-agent.py`, `spawn-agent.py`, `prompt-agent.py`, `reconcile.py`, `monitor-agents.py`, `collect-agent.py`, `check-ownership.py`, `finish-agent.py`, `promote-run.py`, `retire-agents.py`, `rotate.py`, `ack-handoff.py`, `run_state.py`.
 Exit codes: 0 ok, 1 runtime, 2 usage, 3 refusal/precondition (all lock-taking commands accept `--lock-timeout SECONDS`, default 120).
 
 ## State authority & Safety
-- Default storage is per-run SQLite WAL (`~/.local/state/herdr-orchestrator/runs/<run-id>/run.db`, overridable via `HERDR_ORCHESTRATOR_STATE_DIR`) + content-addressed `blobs/<sha256>` + rebuildable `index.db` for O(1) pane/worktree auto-discovery. Zero files are written into the target repo working tree. Legacy `--dir <repo>/docs` mode remains supported for existing runs.
+- State lives in per-run SQLite WAL (`~/.local/state/herdr-orchestrator/runs/<run-id>/run.db`, overridable via `HERDR_ORCHESTRATOR_STATE_DIR`) + content-addressed `blobs/<sha256>` + rebuildable `index.db` for O(1) pane/worktree auto-discovery. Zero files are written into the target repo working tree and zero `.md` handoff files are persisted on disk.
 - The append-only event log (`events` table in `run.db`, or `events.jsonl` in legacy runs) is authoritative. Never treat Herdr `idle`/`done` as controller success.
 - Never run overlapping writers concurrently; serialize shared `owns` paths (non-integrator `**` overlaps everything).
 - Never retire user-owned `pane` executors, mutate the primary checkout/promotion ref by hand, or stop the active Herdr server.

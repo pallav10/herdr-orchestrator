@@ -17,19 +17,14 @@ import ho
 import ioutil
 import ledger
 import scheduler
-import session_docs
+import state_paths
 import testkit
 
 
-def _init_gitignored_repo(root: Path) -> tuple[Path, Path]:
+def _init_test_repo(root: Path) -> tuple[Path, Path]:
     repo = testkit.seed_repo(root / "repo")
-    (repo / ".gitignore").write_text("/docs/runs/\n/docs/sessions/\n", encoding="utf-8")
-    testkit.git(repo, "add", ".gitignore")
-    testkit.git(repo, "commit", "-m", "ignore runtime docs")
-    docs = repo / "docs"
-    docs.mkdir(parents=True, exist_ok=True)
-    return repo, docs
-
+    state_dir = root / "state"
+    return repo, state_dir
 
 def _run_ho(argv: list[str], *, env: dict[str, str | None] | None = None, cwd: Path | None = None) -> tuple[int, str, str]:
     out = io.StringIO()
@@ -67,15 +62,20 @@ def _run_ho(argv: list[str], *, env: dict[str, str | None] | None = None, cwd: P
 
 
 class HoCliTests(unittest.TestCase):
-    def test_auto_context_resolves_from_env_and_session_and_fails_closed_when_missing(self) -> None:
+    def test_auto_context_resolves_from_env_and_index_and_fails_closed_when_missing(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            repo, docs = _init_gitignored_repo(Path(td))
-            env = {"HERDR_WORKSPACE_ID": "ws-auto", "HERDR_PANE_ID": "pane-auto"}
-            code, out, err = _run_ho(["init", "--dir", str(docs), "--job", "auto-ctx"], env=env, cwd=repo)
+            repo, state_dir = _init_test_repo(Path(td))
+            env = {
+                state_paths.STATE_DIR_ENV: str(state_dir),
+                "HERDR_WORKSPACE_ID": "ws-auto",
+                "HERDR_PANE_ID": "pane-auto",
+            }
+            code, out, err = _run_ho(["init", "--job", "auto-ctx"], env=env, cwd=repo)
             self.assertEqual(code, 0, err)
             init_payload = json.loads(out)
             run_path = Path(init_payload["run"])
-            session_path = Path(init_payload["session"])
+            session_id = init_payload["session"]
+            self.assertEqual(session_id, "epoch-1")
             self.assertIn("ho.py", init_payload["next_command"])
             self.assertIn("accept", init_payload["next_command"])
 
@@ -90,39 +90,33 @@ class HoCliTests(unittest.TestCase):
             finally:
                 os.chdir(old_cwd)
             self.assertEqual(ctx["run"], run_path)
-            self.assertEqual(ctx["session"], session_path)
-            self.assertEqual(ctx["holder"], {"workspace": "ws-auto", "pane": "pane-auto", "session": str(session_path)})
+            self.assertEqual(ctx["session"], session_id)
+            self.assertEqual(ctx["holder"], {"workspace": "ws-auto", "pane": "pane-auto", "session": session_id})
             self.assertEqual(ctx["epoch"], 1)
 
             with mock.patch.object(ho, "_live_agents_by_name", return_value={}):
-                code, out, err = _run_ho(["status", "--docs", "docs"], env=env, cwd=repo)
+                code, out, err = _run_ho(["status"], env=env, cwd=repo)
             self.assertEqual(code, 0, err)
             self.assertEqual(json.loads(out)["run"], str(run_path))
 
-            # Fails closed when env has unknown pane and no explicit --run/--session
+            # Fails closed when env has unknown pane and no explicit --run
             code, _, err = _run_ho(
                 ["status"],
-                env={"HERDR_WORKSPACE_ID": "ws-other", "HERDR_PANE_ID": "pane-other"},
+                env={state_paths.STATE_DIR_ENV: str(state_dir), "HERDR_WORKSPACE_ID": "ws-other", "HERDR_PANE_ID": "pane-other"},
                 cwd=repo,
             )
             self.assertEqual(code, 3)
             self.assertIn("ho.py init", err)
 
-            missing_env = dict.fromkeys(env)
+            missing_env = {state_paths.STATE_DIR_ENV: str(state_dir), "HERDR_WORKSPACE_ID": None, "HERDR_PANE_ID": None}
             run_args = ["--run", str(run_path)]
             for command in (["dispatch", "A", "--prompt", "work"], ["next", "--reconcile"]):
-                for session_args in ([], ["--session", str(session_path)]):
+                for session_args in ([], ["--session", session_id]):
                     with self.subTest(command=command, session_args=session_args):
                         code, _, err = _run_ho([*command, *run_args, *session_args], env=missing_env, cwd=repo)
                         self.assertEqual(code, 3, err)
                         self.assertIn("--holder-workspace", err)
                         self.assertIn("--holder-pane", err)
-
-            code, _, err = _run_ho(
-                ["next", "--reconcile", *run_args, "--docs", "missing-docs"], env=env, cwd=repo,
-            )
-            self.assertEqual(code, 3, err)
-            self.assertIn("--session", err)
 
             with mock.patch.object(ho, "_live_agents_by_name", return_value={}):
                 code, out, err = _run_ho(["status", *run_args], env=missing_env, cwd=repo)
@@ -139,9 +133,13 @@ class HoCliTests(unittest.TestCase):
 
     def test_next_dispatches_script_alongside_running_worker_and_explains_other_executors(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            repo, docs = _init_gitignored_repo(Path(td))
-            env = {"HERDR_WORKSPACE_ID": "ws-executors", "HERDR_PANE_ID": "pane-executors"}
-            code, out, err = _run_ho(["init", "--dir", str(docs), "--job", "executors"], env=env, cwd=repo)
+            repo, state_dir = _init_test_repo(Path(td))
+            env = {
+                state_paths.STATE_DIR_ENV: str(state_dir),
+                "HERDR_WORKSPACE_ID": "ws-executors",
+                "HERDR_PANE_ID": "pane-executors",
+            }
+            code, out, err = _run_ho(["init", "--job", "executors"], env=env, cwd=repo)
             self.assertEqual(code, 0, err)
             run_path = Path(json.loads(out)["run"])
             graph_file = Path(td) / "graph.json"
@@ -229,10 +227,9 @@ class HoCliTests(unittest.TestCase):
 
         # Accept command with shorthand graph and custom summary output name
         with tempfile.TemporaryDirectory() as td:
-            repo, docs = _init_gitignored_repo(Path(td))
-            env = {"HERDR_WORKSPACE_ID": "ws-norm", "HERDR_PANE_ID": "pane-norm"}
-            code, out, err = _run_ho(["init", "--dir", str(docs), "--job", "norm"], env=env, cwd=repo)
-            self.assertEqual(code, 0, err)
+            repo, state_dir = _init_test_repo(Path(td))
+            env = {state_paths.STATE_DIR_ENV: str(state_dir), "HERDR_WORKSPACE_ID": "ws-norm", "HERDR_PANE_ID": "pane-norm"}
+            code, out, err = _run_ho(["init", "--job", "norm"], env=env, cwd=repo)
             graph_file = Path(td) / "graph.json"
             graph_file.write_text(json.dumps({
                 "nodes": [
@@ -254,10 +251,9 @@ class HoCliTests(unittest.TestCase):
 
     def test_custom_summary_output_name_maps_to_summary_json(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            repo, docs = _init_gitignored_repo(Path(td))
-            env = {"HERDR_WORKSPACE_ID": "ws-sum", "HERDR_PANE_ID": "pane-sum"}
-            code, out, err = _run_ho(["init", "--dir", str(docs), "--job", "sum-map"], env=env, cwd=repo)
-            self.assertEqual(code, 0, err)
+            repo, state_dir = _init_test_repo(Path(td))
+            env = {state_paths.STATE_DIR_ENV: str(state_dir), "HERDR_WORKSPACE_ID": "ws-sum", "HERDR_PANE_ID": "pane-sum"}
+            code, out, err = _run_ho(["init", "--job", "sum-map"], env=env, cwd=repo)
             init_data = json.loads(out)
             run_path = Path(init_data["run"])
             holder = {"workspace": "ws-sum", "pane": "pane-sum", "session": init_data["session"]}
@@ -290,9 +286,8 @@ class HoCliTests(unittest.TestCase):
 
     def test_ho_next_across_all_phases_and_ho_promote_auto_sha(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            repo, docs = _init_gitignored_repo(Path(td))
-            env = {"HERDR_WORKSPACE_ID": "ws-loop", "HERDR_PANE_ID": "pane-loop"}
-
+            repo, state_dir = _init_test_repo(Path(td))
+            env = {state_paths.STATE_DIR_ENV: str(state_dir), "HERDR_WORKSPACE_ID": "ws-loop", "HERDR_PANE_ID": "pane-loop"}
             # Phase 0: init (no session yet)
             with mock.patch.object(ho, "_live_agents_by_name", return_value={}):
                 code, out, err = _run_ho(["next"], env=env, cwd=repo)
@@ -302,8 +297,7 @@ class HoCliTests(unittest.TestCase):
             self.assertTrue(nxt["commands"][0].startswith("python3 "))
 
             # Initialize run -> Phase 1: accept_graph
-            code, out, err = _run_ho(["init", "--dir", str(docs), "--job", "full-loop"], env=env, cwd=repo)
-            self.assertEqual(code, 0, err)
+            code, out, err = _run_ho(["init", "--job", "full-loop"], env=env, cwd=repo)
             init_data = json.loads(out)
             run_path = Path(init_data["run"])
             holder = {"workspace": "ws-loop", "pane": "pane-loop", "session": init_data["session"]}

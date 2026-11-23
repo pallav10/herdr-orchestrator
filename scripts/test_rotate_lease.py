@@ -197,7 +197,7 @@ class RotateLeaseTest(LeaseFixtures, unittest.TestCase):
                 patches.enter_context(mock.patch.object(module.reconcile, 'observe_live_herdr', lambda run=None, *, lock_timeout=120: []))
                 patches.enter_context(mock.patch.object(module.scheduler, 'reconcile', reconcile))
                 with mock.patch.dict(os.environ, {'HERDR_WORKSPACE_ID': "old-ws", 'HERDR_PANE_ID': "old-pane"}):
-                    code, _, err = run_cli(module, ["rotate.py", "--session", str(session), "--timeout", "1"])
+                    code, _, err = run_cli(module, ["rotate.py", "--run", str(run), "--timeout", "1"])
                 self.assertEqual(code, 3, err)
                 self.assertEqual(calls, [])
                 self.assertEqual(run_state.replay(run)["controller"]["lease"], "draining")
@@ -244,7 +244,7 @@ class RotateLeaseTest(LeaseFixtures, unittest.TestCase):
         self.patch_object(module.uuid, 'uuid4', lambda: SimpleNamespace(hex=nonce))
         self.patch_object(module.reconcile, 'observe_live_herdr', lambda run=None, *, lock_timeout=120: [])
         with mock.patch.dict(os.environ, {'HERDR_WORKSPACE_ID': "old-ws", 'HERDR_PANE_ID': "old-pane"}):
-            code, _, err = run_cli(module, ["rotate.py", "--session", str(session), "--timeout", "1"])
+            code, _, err = run_cli(module, ["rotate.py", "--run", str(run), "--timeout", "1"])
         self.assertEqual(code, 0, err)
         self.assertEqual(len(captured), 1)
         self.assertLess(self.event_types(run).index("succeeded"), self.event_types(run).index("lease_transfer"))
@@ -267,7 +267,7 @@ class RotateLeaseTest(LeaseFixtures, unittest.TestCase):
                 patches.enter_context(mock.patch.object(module, 'herdr', lambda *_: {"result": {"workspace": {"tokens": {}}}}))
                 patches.enter_context(mock.patch.object(module.reconcile, 'observe_live_herdr', lambda run=None, *, lock_timeout=120: []))
                 with mock.patch.dict(os.environ, {'HERDR_WORKSPACE_ID': "old-ws", 'HERDR_PANE_ID': "old-pane"}):
-                    code, _, err = run_cli(module, ["rotate.py", "--session", str(session), "--timeout", "1"])
+                    code, _, err = run_cli(module, ["rotate.py", "--run", str(run), "--timeout", "1"])
                 self.assertEqual(code, 3, err)
                 self.assertEqual(calls, [])
                 self.assertIn("lease_drain_started", self.event_types(run))
@@ -299,7 +299,7 @@ class RotateLeaseTest(LeaseFixtures, unittest.TestCase):
 
         self.patch_object(module.scheduler, 'reconcile', reconcile)
         with mock.patch.dict(os.environ, {'HERDR_WORKSPACE_ID': "old-ws", 'HERDR_PANE_ID': "old-pane"}):
-            code, _, err = run_cli(module, ["rotate.py", "--session", str(session), "--timeout", "1"])
+            code, _, err = run_cli(module, ["rotate.py", "--run", str(run), "--timeout", "1"])
         self.assertEqual(code, 3, err)
         self.assertIn("active Herdr executors cannot be observed", err)
         self.assertEqual(calls, [])
@@ -350,7 +350,7 @@ class RotateLeaseTest(LeaseFixtures, unittest.TestCase):
         self.patch_object(module.reconcile, 'observe_live_herdr', lambda run=None, *, lock_timeout=120: None)
         self.patch_object(module.scheduler, 'reconcile', reconcile)
         with mock.patch.dict(os.environ, {'HERDR_WORKSPACE_ID': "old-ws", 'HERDR_PANE_ID': "old-pane"}):
-            code, _, err = run_cli(module, ["rotate.py", "--session", str(session), "--timeout", "1"])
+            code, _, err = run_cli(module, ["rotate.py", "--run", str(run), "--timeout", "1"])
         self.assertEqual(code, 0, err)
         self.assertEqual(len(captured), 1)
         self.assertTrue(seen)
@@ -405,7 +405,7 @@ class RotateLeaseTest(LeaseFixtures, unittest.TestCase):
         self.patch_object(module.reconcile, 'observe_live_herdr', lambda run=None, *, lock_timeout=120: [])
         self.patch_object(module.scheduler, 'reconcile', reconcile)
         with mock.patch.dict(os.environ, {'HERDR_WORKSPACE_ID': "old-ws", 'HERDR_PANE_ID': "old-pane"}):
-            code, _, err = run_cli(module, ["rotate.py", "--session", str(session), "--timeout", "1"])
+            code, _, err = run_cli(module, ["rotate.py", "--run", str(run), "--timeout", "1"])
         self.assertEqual(code, 0, err)
         self.assertEqual(len(captured), 1)
         self.assertTrue(seen)
@@ -474,7 +474,7 @@ class RotateLeaseTest(LeaseFixtures, unittest.TestCase):
         self.patch_object(module.reconcile, 'observe_live_herdr', lambda run=None, *, lock_timeout=120: live)
         self.patch_object(module.scheduler, 'reconcile', reconcile)
         with mock.patch.dict(os.environ, {'HERDR_WORKSPACE_ID': "old-ws", 'HERDR_PANE_ID': "old-pane"}):
-            code, _, err = run_cli(module, ["rotate.py", "--session", str(session), "--timeout", "1"])
+            code, _, err = run_cli(module, ["rotate.py", "--run", str(run), "--timeout", "1"])
         self.assertEqual(code, 0, err)
         self.assertEqual(len(captured), 1)
         self.assertTrue(seen)
@@ -487,39 +487,24 @@ class RotateLeaseTest(LeaseFixtures, unittest.TestCase):
 
 
 
-    def test_rotate_and_ack_refuse_invalid_session_run_before_side_effects(self):
+    def test_rotate_and_ack_refuse_missing_run_before_side_effects(self):
         cases = (
-            ("rotate.py", "outside-docs-runs", 3, "old-ws", "old-pane", "lease_drain_started"),
-            ("rotate.py", "noncanonical", 3, "old-ws", "old-pane", "lease_drain_started"),
-            ("ack-handoff.py", "outside-docs-runs", 3, "new-ws", "new-pane", "lease_transfer"),
-            ("ack-handoff.py", "noncanonical", 3, "new-ws", "new-pane", "lease_transfer"),
+            ("rotate.py", 3, "old-ws", "old-pane"),
+            ("ack-handoff.py", 3, "new-ws", "new-pane"),
         )
-        for script, invalid_run, expected_code, workspace, pane, forbidden_event in cases:
-            with self.subTest(script=script, invalid_run=invalid_run), tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as patches:
-                self.addCleanup(patches.close)
-                self.root = Path(tmp).resolve()
-                self.docs = self.root / "docs"
-                foreign = Path(run_state.claim_run(self.root / "other-docs", "Other")["dir"]) if invalid_run == "outside-docs-runs" else None
-                run = self.new_run({"schema_version": 1, "nodes": {}})
-                session = self.session(run)
-                meta = json.loads((session / "session.json").read_text(encoding="utf-8"))
-                meta["run"] = str(foreign) if foreign is not None else str(run.parent / ".." / "runs" / run.name)
-                (session / "session.json").write_text(json.dumps(meta) + "\n", encoding="utf-8")
+        for script, expected_code, workspace, pane in cases:
+            with self.subTest(script=script), tempfile.TemporaryDirectory() as tmp:
+                missing = Path(tmp) / "missing-run"
                 module = load(script)
                 calls = []
-                if script == "rotate.py":
-                    patches.enter_context(mock.patch.object(module.ioutil, 'run_cmd', lambda cmd, **kwargs: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "{}", "")))
-                    argv = [script, "--session", str(session), "--timeout", "1"]
-                else:
-                    patches.enter_context(mock.patch.object(module.session_docs, 'open_session', lambda *args, **kwargs: calls.append(kwargs) or {}))
-                    argv = [script, "--nonce", "n", "--session", str(session)]
-                with mock.patch.dict(os.environ, {'HERDR_WORKSPACE_ID': workspace, 'HERDR_PANE_ID': pane}):
-                    code, _, err = run_cli(module, argv)
+                with mock.patch.object(module.ioutil, 'run_cmd', lambda cmd, **kwargs: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "{}", "")):
+                    argv = [script, "--run", str(missing), "--timeout", "1"] if script == "rotate.py" else [script, "--nonce", "n", "--run", str(missing)]
+                    with mock.patch.dict(os.environ, {'HERDR_WORKSPACE_ID': workspace, 'HERDR_PANE_ID': pane}):
+                        code, _, err = run_cli(module, argv)
                 self.assertEqual(code, expected_code, err)
                 self.assertEqual(calls, [])
-                self.assertNotIn(forbidden_event, self.event_types(foreign if foreign is not None else run))
 
-    def test_rotate_requires_session(self):
+    def test_rotate_requires_run(self):
         module = load("rotate.py")
         calls = []
         self.patch_object(module.ioutil, 'run_cmd', lambda cmd, **kwargs: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "{}", ""))
@@ -533,25 +518,10 @@ class RotateLeaseTest(LeaseFixtures, unittest.TestCase):
         calls = []
         self.patch_object(module.ioutil, 'run_cmd', lambda cmd, **kwargs: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "{}", ""))
         code, _, err = run_cli(
-            module, ["rotate.py", "--session", "/tmp/pred", "--dir", "docs"]
+            module, ["rotate.py", "--run", "/tmp/run", "--dir", "docs"]
         )
         self.assertEqual(code, 2, err)
         self.assertEqual(calls, [])
-
-
-    def test_rotate_refuses_missing_bootstrap_before_drain(self):
-        for missing in ("HANDOFF.md", "NEXT-SESSION-PROMPT.md"):
-            with self.subTest(missing=missing):
-                run = self.new_run({"schema_version": 1, "nodes": {}})
-                session = self.session(run, name="pred-" + missing)
-                (session / missing).unlink()
-                module = load("rotate.py")
-                with mock.patch.object(module.session_docs, "open_session", side_effect=AssertionError("opened successor")), mock.patch.object(module.ioutil, "run_cmd", side_effect=AssertionError("spawned successor")):
-                    code, _, err = run_cli(module, ["rotate.py", "--session", str(session), "--timeout", "1"])
-                self.assertEqual(code, 3, err)
-                self.assertIn(missing, err)
-                self.assertNotIn("lease_drain_started", self.event_types(run))
-
     def test_rotate_drains_before_successor_spawn(self):
         run = self.new_run({"schema_version": 1, "nodes": {}})
         session = self.session(run)
@@ -588,7 +558,7 @@ class RotateLeaseTest(LeaseFixtures, unittest.TestCase):
         self.patch_object(module.uuid, 'uuid4', lambda: SimpleNamespace(hex=nonce))
         self.patch_object(module.reconcile, 'observe_live_herdr', lambda run=None, *, lock_timeout=120: [])
         with mock.patch.dict(os.environ, {'HERDR_WORKSPACE_ID': "old-ws", 'HERDR_PANE_ID': "old-pane"}):
-            code, out, err = run_cli(module, ["rotate.py", "--session", str(session), "--timeout", "1"])
+            code, out, err = run_cli(module, ["rotate.py", "--run", str(run), "--timeout", "1"])
         self.assertEqual(code, 0, err)
         self.assertEqual(json.loads(out)["run"], str(run))
         drains = [event for event in self.events(run) if event["type"] == "lease_drain_started"]
@@ -605,12 +575,10 @@ class RotateLeaseTest(LeaseFixtures, unittest.TestCase):
         self.assertLess(types.index("lease_drain_started"), types.index("lease_transfer"))
         prompt = captured[0][captured[0].index("--prompt") + 1]
         self.assertIn(str(run), prompt)
-        self.assertLess(prompt.index("NEXT-SESSION-PROMPT.md"), prompt.index("HANDOFF.md"))
-        self.assertLess(prompt.index("HANDOFF.md"), prompt.index("session.json"))
-        self.assertLess(prompt.index("session.json"), prompt.index("ack-handoff.py"))
-        self.assertLess(prompt.index("ack-handoff.py"), prompt.index("reconcile.py --run"))
-        self.assertIn("$HERDR_WORKSPACE_ID", prompt)
-        self.assertIn("$HERDR_PANE_ID", prompt)
+        self.assertIn("ack-handoff.py", prompt)
+        self.assertIn("ho.py", prompt)
+        self.assertNotIn("HANDOFF.md", prompt)
+        self.assertNotIn("NEXT-SESSION-PROMPT.md", prompt)
 
     def test_rotate_user_owned_predecessor_stands_down_without_close(self):
         run = self.new_run({"schema_version": 1, "nodes": {}})
@@ -648,7 +616,7 @@ class RotateLeaseTest(LeaseFixtures, unittest.TestCase):
         self.patch_object(module.uuid, 'uuid4', lambda: SimpleNamespace(hex=nonce))
         self.patch_object(module.reconcile, 'observe_live_herdr', lambda run=None, *, lock_timeout=120: [])
         with mock.patch.dict(os.environ, {'HERDR_WORKSPACE_ID': "old-ws", 'HERDR_PANE_ID': "old-pane"}):
-            code, out, err = run_cli(module, ["rotate.py", "--session", str(session), "--timeout", "1"])
+            code, out, err = run_cli(module, ["rotate.py", "--run", str(run), "--timeout", "1"])
         self.assertEqual(code, 0, err)
         payload = json.loads(out)
         self.assertEqual(payload["predecessor"]["retire"], "stand-down")
@@ -688,7 +656,7 @@ class RotateLeaseTest(LeaseFixtures, unittest.TestCase):
         self.patch_object(module.uuid, 'uuid4', lambda: SimpleNamespace(hex=nonce))
         self.patch_object(module.reconcile, 'observe_live_herdr', lambda run=None, *, lock_timeout=120: [])
         with mock.patch.dict(os.environ, {'HERDR_WORKSPACE_ID': "old-ws", 'HERDR_PANE_ID': "old-pane"}):
-            code, _, err = run_cli(module, ["rotate.py", "--session", str(session), "--timeout", "1"])
+            code, _, err = run_cli(module, ["rotate.py", "--run", str(run), "--timeout", "1"])
         self.assertEqual(code, 3, err)
         self.assertIn("handoff ack does not match spawned successor", err)
 
@@ -765,7 +733,7 @@ class RotateLeaseTest(LeaseFixtures, unittest.TestCase):
         self.patch_object(module.reconcile, 'observe_live_herdr', lambda run=None, *, lock_timeout=120: [])
         self.patch_object(module.time, 'sleep', lambda *_: None)
         with mock.patch.dict(os.environ, {'HERDR_WORKSPACE_ID': "old-ws", 'HERDR_PANE_ID': "old-pane"}):
-            code, out, err = run_cli(module, ["rotate.py", "--session", str(session), "--timeout", "1"])
+            code, out, err = run_cli(module, ["rotate.py", "--run", str(run), "--timeout", "1"])
         self.assertEqual(code, 3, err)
         self.assertFalse(json.loads(out)["acked"])
         self.assertIn("lease_transfer", self.event_types(run))
@@ -809,49 +777,22 @@ class RotateLeaseTest(LeaseFixtures, unittest.TestCase):
         self.patch_object(module.reconcile, 'observe_live_herdr', lambda run=None, *, lock_timeout=120: [])
         self.patch_object(module.time, 'sleep', lambda *_: None)
         with mock.patch.dict(os.environ, {'HERDR_WORKSPACE_ID': "old-ws", 'HERDR_PANE_ID': "old-pane"}):
-            code, out, err = run_cli(module, ["rotate.py", "--session", str(session), "--timeout", "1"])
+            code, out, err = run_cli(module, ["rotate.py", "--run", str(run), "--timeout", "1"])
         self.assertEqual(code, 0, err)
         self.assertTrue(json.loads(out)["acked"])
         self.assertGreaterEqual(polls["n"], 2)
 
     def test_ack_refuses_active_lease_without_binding_or_transfer(self):
         run = self.new_run(bind=False)
-        session = self.session(run)
         module = load("ack-handoff.py")
-        opened = []
-        self.patch_object(module.session_docs, 'open_session', lambda *args, **kwargs: opened.append(kwargs) or {})
         with mock.patch.dict(os.environ, {'HERDR_WORKSPACE_ID': "new-ws", 'HERDR_PANE_ID': "new-pane"}):
-            code, _, err = run_cli(module, ["ack-handoff.py", "--nonce", "n", "--session", str(session)])
+            code, _, err = run_cli(module, ["ack-handoff.py", "--nonce", "n", "--run", str(run)])
         self.assertEqual(code, 3, err)
-        self.assertEqual(opened, [])
         self.assertNotIn("lease_transfer", self.event_types(run))
 
-    def test_ack_refuses_different_predecessor_before_token_stamp(self):
-        bound_session = str((self.docs / "sessions" / "bound-session").resolve())
-        bound = {"workspace": "bound-ws", "pane": "bound-pane", "session": bound_session}
-        run = self.new_run({"schema_version": 1, "nodes": {}}, holder=bound)
-        session = self.session(run)
-        run_state.append_event(run, {"type": "lease_drain_started", **bound}, holder=bound)
-        module = load("ack-handoff.py")
-        opened = []
-        calls = []
-        self.patch_object(module.session_docs, 'open_session', lambda *args, **kwargs: opened.append(kwargs) or {})
-        self.patch_object(module, 'herdr', lambda *args: calls.append(args) or {})
-        with mock.patch.dict(os.environ, {'HERDR_WORKSPACE_ID': "new-ws", 'HERDR_PANE_ID': "new-pane"}):
-            code, _, err = run_cli(module, ["ack-handoff.py", "--nonce", "n", "--session", str(session)])
-        self.assertEqual(code, 3, err)
-        self.assertEqual(opened, [])
-        self.assertEqual(calls, [])
-        self.assertNotIn("lease_transfer", self.event_types(run))
-
-
-    def test_ack_recovers_stamp_failure_without_duplicate_session_or_transfer(self):
+    def test_ack_recovers_stamp_failure_without_duplicate_transfer(self):
         run = self.new_run({"schema_version": 1, "nodes": {"A": {"id": "A", "executor": "herdr-agent"}}})
         session = self.session(run)
-        (session / "progress.md").unlink()
-        (session / "HANDOFF.md").write_text("## Run\nInformational prose, not a machine locator.\n", encoding="utf-8")
-        for note in ("HANDOFF.md", "NEXT-SESSION-PROMPT.md"):
-            os.utime(session / note, (1, 1))
         holder = self.holder(session)
         self.start_attempt(
             run,
@@ -869,64 +810,46 @@ class RotateLeaseTest(LeaseFixtures, unittest.TestCase):
             return {}
 
         self.patch_object(module, 'herdr', stamp)
-        with mock.patch.dict(os.environ, {'HERDR_WORKSPACE_ID': "new-ws", 'HERDR_PANE_ID': "new-pane"}):
+        with mock.patch.dict(os.environ, {
+            'HERDR_WORKSPACE_ID': "new-ws",
+            'HERDR_PANE_ID': "new-pane",
+            'HERDR_ORCHESTRATOR_STATE_DIR': str(self.root / "state"),
+        }):
             first_code, first_out, first_err = run_cli(
-                module, ["ack-handoff.py", "--nonce", "nonce", "--session", str(session)]
+                module, ["ack-handoff.py", "--nonce", "nonce", "--run", str(run)]
             )
-            first_created = [
-                path.resolve() for path in (self.docs / "sessions").iterdir()
-                if path.is_dir() and not path.is_symlink() and path.resolve() != session.resolve()
-            ]
             code, out, err = run_cli(
-                module, ["ack-handoff.py", "--nonce", "nonce", "--session", str(session)]
+                module, ["ack-handoff.py", "--nonce", "nonce", "--run", str(run)]
             )
         self.assertEqual(first_code, 1, first_err)
         self.assertEqual(first_out, "")
         self.assertIn("metadata stamp failed", first_err)
         self.assertEqual(code, 0, err)
         payload = json.loads(out)
-        successor = Path(payload["session"]).resolve()
-        self.assertTrue(Path(payload["session"]).is_absolute())
-        self.assertEqual(payload["session"], run_state.canonical_path(successor))
-        self.assertEqual(first_created, [successor])
-        created = [
-            path.resolve() for path in (self.docs / "sessions").iterdir()
-            if path.is_dir() and not path.is_symlink() and path.resolve() != session.resolve()
-        ]
-        self.assertEqual(created, [successor])
+        self.assertEqual(payload["session"], "epoch-2")
+        self.assertEqual(payload["session_id"], "epoch-2")
         self.assertEqual(payload["run"], str(run))
         self.assertEqual(payload["workspace"], "new-ws")
-        self.assertEqual(payload["parent"], session.name)
-        self.assertTrue(successor.is_dir())
-        self.assertNotEqual(successor, session.resolve())
-        self.assertEqual(
-            json.loads((successor / "session.json").read_text(encoding="utf-8"))["run"],
-            str(run),
-        )
         controller = run_state.replay(run)["controller"]
         self.assertEqual(controller["epoch"], 2)
         self.assertEqual(controller["lease"], "active")
         self.assertEqual(controller["workspace"], "new-ws")
         self.assertEqual(controller["pane"], "new-pane")
-        self.assertEqual(controller["session"], str(successor))
+        self.assertEqual(controller["session"], "epoch-2")
         transfers = [event for event in self.events(run) if event["type"] == "lease_transfer"]
         self.assertEqual(len(transfers), 1)
         transfer = transfers[0]
         self.assertEqual(transfer["workspace"], "new-ws")
         self.assertEqual(transfer["pane"], "new-pane")
-        self.assertEqual(transfer["session"], str(successor))
+        self.assertEqual(transfer["session"], "epoch-2")
         self.assertEqual(transfer["nonce"], "nonce")
-        self.assertTrue(any(f"session={payload['session_id']}" in str(arg) for arg in calls[-1]))
+        self.assertTrue(any("session=epoch-2" in str(arg) for arg in calls[-1]))
         self.assertTrue(any("handoff-ack=nonce" in str(arg) for arg in calls[-1]))
         with self.assertRaises(run_state.PreconditionError):
             run_state.append_event(
                 run,
                 {"type": "failed", "node": "A", "epoch": 1},
-                holder={
-                    "workspace": "new-ws",
-                    "pane": "new-pane",
-                    "session": str(successor),
-                },
+                holder={"workspace": "new-ws", "pane": "new-pane", "session": "epoch-2"},
             )
         with self.assertRaises(run_state.PreconditionError):
             run_state.append_event(
@@ -935,18 +858,6 @@ class RotateLeaseTest(LeaseFixtures, unittest.TestCase):
                 holder=holder,
             )
 
-    def test_ack_refuses_missing_bootstrap_before_transfer(self):
-        for missing in ("HANDOFF.md", "NEXT-SESSION-PROMPT.md"):
-            with self.subTest(missing=missing):
-                run = self.new_run({"schema_version": 1, "nodes": {}})
-                session = self.session(run, name="pred-" + missing)
-                (session / missing).unlink()
-                module = load("ack-handoff.py")
-                with mock.patch.object(module.session_docs, "open_session", side_effect=AssertionError("opened successor")), mock.patch.object(module.ioutil, "run_cmd", side_effect=AssertionError("spawned successor")):
-                    code, _, err = run_cli(module, ["ack-handoff.py", "--nonce", "n", "--session", str(session)])
-                self.assertEqual(code, 3, err)
-                self.assertIn(missing, err)
-                self.assertNotIn("lease_transfer", self.event_types(run))
     def test_ack_transfer_failure_does_not_stamp_or_print_success(self):
         run = self.new_run({"schema_version": 1, "nodes": {}})
         session = self.session(run)
@@ -964,20 +875,14 @@ class RotateLeaseTest(LeaseFixtures, unittest.TestCase):
         self.patch_object(module, 'herdr', lambda *args: calls.append(args) or {})
         self.patch_object(module.ledger, 'append_event_locked', fail_transfer)
         with mock.patch.dict(os.environ, {'HERDR_WORKSPACE_ID': "new-ws", 'HERDR_PANE_ID': "new-pane"}):
-            code, out, err = run_cli(module, ["ack-handoff.py", "--nonce", "nonce", "--session", str(session)])
+            code, out, err = run_cli(module, ["ack-handoff.py", "--nonce", "nonce", "--run", str(run)])
         self.assertEqual(code, 3, err)
         self.assertEqual(out, "")
         self.assertEqual(calls, [])
         self.assertNotIn("lease_transfer", self.event_types(run))
-        created = [
-            path for path in (self.docs / "sessions").iterdir()
-            if path.is_dir() and not path.is_symlink() and path.resolve() != session.resolve()
-        ]
-        self.assertEqual(len(created), 1)
         controller = run_state.replay(run)["controller"]
         self.assertEqual(controller["lease"], "draining")
         self.assertEqual(controller["session"], str(session.resolve()))
-
 def context_snapshot_path(workspace: str, pane: str, home: Path) -> Path:
     digest = hashlib.sha256(f"{workspace}\n{pane}".encode()).hexdigest()
     return home / ".omp" / "run" / "herdr-context" / f"{digest}.json"
@@ -1374,7 +1279,7 @@ class ContextUsageTest(LeaseFixtures, unittest.TestCase):
         ):
             code, out, err = run_cli(
                 self.rotate,
-                ["rotate.py", "--session", str(planted.session), "--timeout", "1"],
+                ["rotate.py", "--run", str(planted.run), "--timeout", "1"],
                 context_reader=False,
             )
         self.assertEqual(code, 3, err)
@@ -1423,7 +1328,7 @@ class ContextUsageTest(LeaseFixtures, unittest.TestCase):
         ):
             code, out, err = run_cli(
                 self.rotate,
-                ["rotate.py", "--session", str(planted.session), "--timeout", "1"],
+                ["rotate.py", "--run", str(planted.run), "--timeout", "1"],
                 context_reader=False,
             )
         self.assertEqual(code, 0, err)

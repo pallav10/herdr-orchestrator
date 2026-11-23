@@ -1,19 +1,23 @@
 # Controller run-state API
 
-Import `run_state` with `scripts/` on the Python path. It is the explicit controller-facing facade; defining modules are `ioutil`, `graph_model`, `ledger`, `authz`, `artifacts`, `receipts`, `routing`, `liveness`, `promotion`, `scheduler`, and `cli_common`. Production scripts use their defining modules rather than private facade imports. The facade is not a second state authority or compatibility framework.
+Import `run_state` with `scripts/` on the Python path. It is the explicit controller-facing facade; defining modules are `ioutil`, `graph_model`, `ledger`, `run_store`, `state_paths`, `authz`, `artifacts`, `receipts`, `routing`, `liveness`, `promotion`, `scheduler`, and `cli_common`. Production scripts use their defining modules rather than private facade imports. The facade is not a second state authority or compatibility framework.
 
-`RUN`, `SESSION` and `REPO` below are canonical absolute paths; the read APIs (`load_run`, `load_graph`, `replay`, `load_state`) accept `RUN` as `str` or `Path` and canonicalize it, and raise `UsageError` for a relative path. Holder `H` has exact `workspace`, `pane`, and canonical `session`. Errors are `UsageError`, `PreconditionError`, or `RunError`. CLI mapping is in [SKILL.md](../SKILL.md).
+`RUN` and `REPO` below are canonical absolute paths; the read APIs (`load_run`, `load_graph`, `replay`, `load_state`) accept `RUN` as `str` or `Path` and canonicalize it, and raise `UsageError` for a relative path. Holder `H` has exact `workspace`, `pane`, and `session` (`epoch-<N>` for SQLite runs). Errors are `UsageError`, `PreconditionError`, or `RunError`. CLI mapping is in [SKILL.md](../SKILL.md).
 
 ## Reads and initialization
 
 | Call | Returns / contract |
 |---|---|
-| `claim_run(docs_root, job)` | Run metadata document (`id`, `job`, `created`, `schema_version`, canonical `path`, initially null `base_sha`/`promotion_ref`/`repo`), uniquely claimed under the gitignored docs root. |
+| `claim_run(docs_root=None, job="", *, storage="auto", repo=None, state_dir=None)` | Run metadata document (`id`, `job`, `created`, `schema_version`, canonical `path`, initially null `base_sha`/`promotion_ref`/`repo`). When `docs_root=None` (default), creates a SQLite WAL run under XDG state (`state_paths.runs_root`) and registers it in `index.db`. |
 | `load_run(RUN)` | Run metadata document; not runtime nodes. |
 | `load_graph(RUN)` | Accepted graph document, including authoritative committed revision resolution. |
 | `replay(RUN)` | `{state, controller, events, skipped_stale, truncated_tail}`. |
 | `load_state(RUN)` | Exactly `replay(RUN)["state"]`; the state read path. |
 | `bind_session_run(RUN, holder=H, lock_timeout=120)` | `{state, controller, event}` after exact initial holder binding. |
+| `record_note(RUN, kind=K, body=B, holder=H, lock_timeout=120)` | Appends a `note_recorded` event (`decision\|contract\|blocker\|focus\|gotcha\|handoff`) into `run.db`. |
+| `list_notes(RUN, kind=None, epoch=None)` | Returns structured controller handoff notes from `run.db`. |
+| `put_blob(RUN, data, kind="generic")` / `get_blob(RUN, ref)` | Writes/reads write-once SHA-256 content-addressed payloads under `<run>/blobs/<sha256>`. |
+| `synthesize_brief(RUN, ...)` | Builds structured + on-demand markdown run brief directly from `run.db` state and notes. |
 | `validate_graph(graph)` | `None` on valid graph; otherwise refusal, no accepted revision. |
 | `accept_graph(RUN, graph, repo=REPO, holder=H, lock_timeout=120)` | Accepted graph document: `schema_version`, `run`, `base_sha`, `promotion_ref`, `nodes`. |
 | `validate-graph.py --graph-file FILE\|-` | Offline static linter: `{valid, errors, cycles, overlaps, waves, max_parallelism}` using `validate_graph` plus iterative Tarjan SCC cycle detection; exits 0 valid, 3 invalid. |
@@ -44,7 +48,7 @@ Acceptance validates IDs (`[A-Za-z0-9][A-Za-z0-9._-]{0,31}`), unique aliases, de
 
 Unlaunched Herdr plans may be revised: planned/ready handles are plan selectors, so accepted graph changes must also appear in `load_state`/replay. A ready `dispatch_intent` freezes `owns` but permits correction of `handle.name` until `launch-intent.json` or `prompt-attempt.json` exists. Pane prompting persists launch intent before any metadata/prompt mutation; either marker freezes the plan even if delivery fails before a `dispatched` event. Do not delete markers or rewrite projections to bypass this boundary. Running/blocked plans and historical runtime handles remain protected.
 
-`session_docs.session_run(session)` is the shared metadata run resolver (not a markdown parser): canonical absolute binding, same-docs-root containment, valid run metadata. Initializer absence/backfill and deferred successor binding have distinct policies documented in [session-docs](session-docs.md) and [rotation](rotation.md).
+`state_paths.lookup_pane(workspace, pane)` resolves the active run for a controller pane in O(1) from rebuildable `index.db`. See [session-docs](session-docs.md) and [rotation](rotation.md).
 
 ## Events, locking and dispatch
 
@@ -62,7 +66,7 @@ The exclusive `fcntl.flock` on `run.lock` spans authorization **and external lau
 
 The requested fallback keeps every existing exclusive critical section and `_DISPATCH_GUARD_DEPTH` nested-append refusal. `ledger.with_lock(run_dir, *, lock_timeout=120, node=None)` bounds acquisition, not time spent inside the critical section. Locked facade APIs `bind_session_run`, `accept_graph`, `append_event`, `dispatch_guard`, `reconcile`, `promote`, `deliver_branch`, and `recover_promotion` accept keyword `lock_timeout=120` without changing their return shapes. Already-locked append helpers do not reacquire the lock.
 
-Lock-taking CLI entrypoints `ho.py`, `init-docs.py`, `accept-graph.py`, `dispatch-agent.py`, `dispatch-wave.py`, `run-script.py`, `spawn-agent.py`, `prompt-agent.py`, `collect-agent.py`, `finish-agent.py`, `promote-run.py`, `invalidate-node.py`, `retire-agents.py`, `rotate.py`, `ack-handoff.py`, `reconcile.py`, and `prune-run.py` accept `--lock-timeout SECONDS`: finite positive, default 120; invalid values are usage errors (2), acquisition timeout is a precondition refusal (3). Forward the same bound to lock-taking child adapters. A child trying to reacquire a parent's held lock refuses within the bound; fallback does not make nested collection concurrent.
+Lock-taking CLI entrypoints `ho.py`, `accept-graph.py`, `dispatch-agent.py`, `dispatch-wave.py`, `run-script.py`, `spawn-agent.py`, `prompt-agent.py`, `collect-agent.py`, `finish-agent.py`, `promote-run.py`, `invalidate-node.py`, `retire-agents.py`, `rotate.py`, `ack-handoff.py`, `reconcile.py`, and `prune-run.py` accept `--lock-timeout SECONDS`: finite positive, default 120; invalid values are usage errors (2), acquisition timeout is a precondition refusal (3). Forward the same bound to lock-taking child adapters. A child trying to reacquire a parent's held lock refuses within the bound; fallback does not make nested collection concurrent.
 
 After acquisition, `<run>/run.lock.owner` records `pid`, `script`, `node`, `since`, canonical `run`, `lock: "run.lock"`, `mode: "exclusive"`, nullable `epoch`, and unique `token`. Timeout diagnostics name the lock/run and mark this owner record **unverified** (missing/malformed records are unknown). Waiters never delete records, infer authority from PID/liveness, or break a lock. Owner-write failure refuses before protected mutation; cleanup removes only its own matching token while still locked. Kernel locking plus replayed holder/epoch checks remain authority. Diagnostics are atomically replaced without fsync; authority and changed-cache durability remain unchanged.
 

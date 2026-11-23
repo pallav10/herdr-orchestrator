@@ -153,7 +153,6 @@ HO="python3 /abs/path/to/herdr-orchestrator/scripts/ho.py"
 $HO init --job my-feature
 ```
 
-*(Legacy `<repo>/docs/` mode remains available via `$HO init --dir /abs/path/to/repo/docs --job my-feature`.)*
 ### 2. Accept a dependency graph
 
 Render a built-in template, optionally pin `default_kind` or per-node `kind`, lint it, and accept:
@@ -225,7 +224,7 @@ Every adapter emits a single JSON object (or flushed JSONL for monitoring) and s
 | **Inspect & Doctor** | `scripts/inspect-run.py`, `doctor.py` | Read-only run timeline + next-action inspector; env/git/Herdr/harness preflight |
 | **Metrics & Prune** | `scripts/run-metrics.py`, `prune-run.py` | Post-run wall/retry/token metrics (`metrics.json`) across OMP/Claude/Codex JSONL + fail-closed worktree/ref GC |
 | **Rotate** | `scripts/rotate.py`, `ack-handoff.py` | Drain lease at ≥ 50% measured context usage and transfer epoch to successor |
-| **Low-Level Adapters** | `init-docs.py`, `accept-graph.py`, `dispatch-agent.py`, `spawn-agent.py`, `prompt-agent.py`, `monitor-agents.py`, `collect-agent.py`, `finish-agent.py`, `promote-run.py`, `retire-agents.py`, `reconcile.py` | Composable single-responsibility primitives underneath `ho.py` |
+| **Low-Level Adapters** | `accept-graph.py`, `dispatch-agent.py`, `spawn-agent.py`, `prompt-agent.py`, `monitor-agents.py`, `collect-agent.py`, `finish-agent.py`, `promote-run.py`, `retire-agents.py`, `reconcile.py` | Composable single-responsibility primitives underneath `ho.py` |
 
 **Standard exit codes:** `0` success · `1` runtime failure · `2` usage/timeout · `3` refusal/findings · `4` `agent_blocked` (`prompt-agent.py`).
 

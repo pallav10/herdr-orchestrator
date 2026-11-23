@@ -40,7 +40,6 @@ CLI_EXTRA_CODES = {RuntimeError: 1}
 import ledger
 import liveness
 import scheduler
-import session_docs
 import context_usage
 import run_store
 
@@ -79,31 +78,8 @@ def _string_dict(raw: object) -> dict[str, str]:
                 found[key] = value
     return found
 
-
-def predecessor_meta(session: Path) -> dict[str, Any]:
-    workspace, pane = current_holder_env()
-    session_id = ioutil.canonical_path(session)
-    session_docs.holder_identity(session, {"workspace": workspace, "pane": pane, "session": session_id})
-    provenance = "user-owned"
-    fetched = herdr("workspace", "get", workspace).get("result", {})
-    raw_ws = fetched.get("workspace")
-    ws = raw_ws if isinstance(raw_ws, dict) else {}
-    tokens = _string_dict(ws.get("tokens"))
-    if tokens.get("provenance") == PROVENANCE_ORCHESTRATOR:
-        provenance = PROVENANCE_ORCHESTRATOR
-    return {
-        "workspace": workspace,
-        "pane": pane,
-        "session": session_id,
-        "provenance": provenance,
-        "retire": "close" if provenance == PROVENANCE_ORCHESTRATOR else "stand-down",
-    }
-
-
-def check_docs(session: Path) -> None:
-    missing = [str(session / name) for name in session_docs.BOOTSTRAP_NAMES if not (session / name).is_file()]
-    if missing:
-        raise ioutil.PreconditionError(f"missing docs: {', '.join(missing)}")
+def predecessor_meta(run: Path) -> dict[str, Any]:
+    return predecessor_meta_for_run(run)
 
 def start_lease_drain(run: Path, holder: dict[str, str], *, handoff: str | None = None, lock_timeout=120) -> dict[str, Any]:
     with ledger.with_lock(run, lock_timeout=lock_timeout):
@@ -183,27 +159,8 @@ def successor_transfer_matches(run: Path, successor: dict[str, Any], nonce: str,
     return False
 
 
-def successor_prompt(session: Path, ack_script: Path, nonce: str, run: Path, *, lock_timeout=120) -> str:
-    reconcile_script = ack_script.with_name("reconcile.py")
-    run_abs = str(run)
-    return (
-        "You are the successor orchestrator pane. Ground first, then take over dispatch.\n"
-        "1) Read these docs in order:\n"
-        f"   - {session / 'NEXT-SESSION-PROMPT.md'}\n"
-        f"   - {session / 'HANDOFF.md'}\n"
-        f"   - {session / session_docs.META_NAME} run: {run_abs}\n"
-        "2) Run this acknowledgment command first; it prints JSON with absolute successor "
-        "session, session_id, workspace, and run:\n"
-        f"   python3 {ack_script} --nonce {nonce} --session {shlex.quote(str(session))} --lock-timeout {lock_timeout}\n"
-        "3) Reconcile the acknowledgment JSON's canonical run and concrete successor session with this pane's holder identity:\n"
-        f"   python3 {reconcile_script} --run <ack JSON run> --session <ack JSON session> "
-        f"--holder-workspace \"$HERDR_WORKSPACE_ID\" --holder-pane \"$HERDR_PANE_ID\" --lock-timeout {lock_timeout}\n"
-        "The nonce is "
-        f"{nonce}. Ack rolls your own session directory bound to run {run_abs}; write only there\n"
-        "from then on, and never follow docs/sessions/latest.\n"
-        "4) Confirm ack succeeded. Reattach live Herdr workers by workspace, pane, agent, and "
-        "tokens; do not redispatch them. Then continue orchestration."
-    )
+def successor_prompt(run: Path, ack_script: Path, nonce: str, *, lock_timeout=120) -> str:
+    return synthesize_successor_prompt(run, ack_script, nonce, lock_timeout=lock_timeout)
 
 def predecessor_meta_for_run(run: Path) -> dict[str, Any]:
     workspace, pane = current_holder_env()
@@ -268,9 +225,7 @@ def main() -> int:
     parser.add_argument("--kind", default=None, help="successor harness kind (defaults to predecessor/env/omp)")
     parser.add_argument("--model-role", default="default")
     parser.add_argument("--model", default=None, help="explicit successor model (overrides --model-role)")
-    target = parser.add_mutually_exclusive_group(required=True)
-    target.add_argument("--session", default=None, help="legacy predecessor session directory")
-    target.add_argument("--run", default=None, help="canonical run directory (zero-md SQLite rotation)")
+    parser.add_argument("--run", required=True, help="canonical run directory")
     parser.add_argument("--focus", default=None, help="handoff summary / current focus recorded on drain")
     parser.add_argument("--timeout", type=int, default=300)
     cli_common.add_lock_timeout_arg(parser)
@@ -288,43 +243,21 @@ def main() -> int:
     if not ack_script.is_file():
         raise RuntimeError(f"missing script: {ack_script}")
 
-    if args.run:
-        run = Path(ioutil.canonical_path(args.run))
-        if not run_store.has_db(run) and not (run / "run.json").is_file():
-            raise ioutil.PreconditionError(f"run not found: {run}")
-        session = None
-        predecessor = predecessor_meta_for_run(run)
-        holder = {key: predecessor[key] for key in authz.HOLDER_KEYS}
-        try:
-            usage = context_usage.require_context_usage(None, holder)
-        except context_usage.ContextUsageError as exc:
-            _print_context_refusal(exc)
-            return 3
-        start_lease_drain(run, holder, handoff=args.focus, lock_timeout=args.lock_timeout)
-        ensure_native_quiesced(run, holder, args.timeout, lock_timeout=args.lock_timeout)
-        nonce = uuid.uuid4().hex
-        prompt = synthesize_successor_prompt(run, ack_script.resolve(), nonce, lock_timeout=args.lock_timeout)
-        session_label = predecessor["session"]
-    else:
-        try:
-            session = session_docs.load_session(Path(args.session))
-        except RuntimeError as exc:
-            raise ioutil.PreconditionError(str(exc)) from exc
-        check_docs(session)
-        run = session_docs.session_run(session)
-        predecessor = predecessor_meta(session)
-        holder = {key: predecessor[key] for key in authz.HOLDER_KEYS}
-        try:
-            usage = context_usage.require_context_usage(session, holder)
-        except context_usage.ContextUsageError as exc:
-            _print_context_refusal(exc)
-            return 3
-        start_lease_drain(run, holder, handoff=args.focus, lock_timeout=args.lock_timeout)
-        ensure_native_quiesced(run, holder, args.timeout, lock_timeout=args.lock_timeout)
-        nonce = uuid.uuid4().hex
-        prompt = successor_prompt(session, ack_script.resolve(), nonce, run, lock_timeout=args.lock_timeout)
-        session_label = session.name
-
+    run = Path(ioutil.canonical_path(args.run))
+    if not run_store.has_db(run) and not (run / "run.json").is_file():
+        raise ioutil.PreconditionError(f"run not found: {run}")
+    predecessor = predecessor_meta_for_run(run)
+    holder = {key: predecessor[key] for key in authz.HOLDER_KEYS}
+    try:
+        usage = context_usage.require_context_usage(None, holder)
+    except context_usage.ContextUsageError as exc:
+        _print_context_refusal(exc)
+        return 3
+    start_lease_drain(run, holder, handoff=args.focus, lock_timeout=args.lock_timeout)
+    ensure_native_quiesced(run, holder, args.timeout, lock_timeout=args.lock_timeout)
+    nonce = uuid.uuid4().hex
+    prompt = synthesize_successor_prompt(run, ack_script.resolve(), nonce, lock_timeout=args.lock_timeout)
+    session_label = predecessor["session"]
     import harnesses
     succ_kind = harnesses.default_kind(explicit=args.kind, detected_kind=usage.get("harness"))
     cmd = [

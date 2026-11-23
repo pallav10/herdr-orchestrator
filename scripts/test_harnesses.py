@@ -19,7 +19,6 @@ if str(SCRIPTS) not in sys.path:
 import context_usage  # noqa: E402
 import graph_model  # noqa: E402
 import harnesses  # noqa: E402
-import session_docs  # noqa: E402
 
 
 def _load(name: str):
@@ -129,11 +128,8 @@ class ClaudeContextHookAndUsageTests(unittest.TestCase):
         hook_mod = _load("claude-context-hook.py")
         with tempfile.TemporaryDirectory() as td:
             home = Path(td).resolve()
-            session_dir = home / "docs" / "sessions" / "s1"
+            session_dir = home / "state"
             session_dir.mkdir(parents=True)
-            meta = {"workspace": "ws-1", "pane": "ws-1:p1", "session_id": "s1", "run": str(home / "docs" / "runs" / "r1")}
-            (session_dir / session_docs.META_NAME).write_text(json.dumps(meta), encoding="utf-8")
-
             now_ms = int(time.time() * 1000)
             env = {
                 "HOME": str(home),

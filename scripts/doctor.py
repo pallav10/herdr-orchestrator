@@ -118,50 +118,6 @@ def _check_git_and_repo(repo_arg: str | None, docs_dir_arg: str | None) -> list[
         detail = (wt_proc.stderr or wt_proc.stdout).strip() or f"rc={wt_proc.returncode}"
         checks.append(_check("git_worktree", "fail", f"git worktree list failed: {detail}"))
 
-    docs_path = Path(docs_dir_arg).expanduser() if docs_dir_arg else (repo_root / "docs")
-    if not docs_path.is_absolute():
-        docs_path = (repo_root / docs_path).resolve(strict=False)
-    else:
-        docs_path = docs_path.resolve(strict=False)
-
-    try:
-        docs_rel = docs_path.relative_to(repo_root)
-    except ValueError:
-        checks.append(_check("gitignore", "fail", f"docs dir {docs_path} is outside repo {repo_root}"))
-        return checks
-
-    symlinked = [sub for sub in ("runs", "sessions") if (docs_path / sub).is_symlink()]
-    if symlinked:
-        checks.append(
-            _check(
-                "docs_symlinks",
-                "fail",
-                "docs runtime dir(s) must not be symlinks: " + ", ".join(f"/{(docs_rel / sub).as_posix()}" for sub in symlinked),
-            )
-        )
-    else:
-        checks.append(_check("docs_symlinks", "ok", f"/{(docs_rel / 'runs').as_posix()} and /{(docs_rel / 'sessions').as_posix()} are not symlinks"))
-
-    missing: list[str] = []
-    for sub in ("runs", "sessions"):
-        rel = (docs_rel / sub).as_posix().rstrip("/") + "/"
-        ign_proc = ioutil.run_cmd(
-            [git_bin, "-C", str(repo_root), "check-ignore", "-q", rel],
-            capture_output=True,
-            text=True,
-        )
-        if ign_proc.returncode == 0:
-            continue
-        if ign_proc.returncode == 1:
-            missing.append("/" + rel)
-        else:
-            checks.append(_check("gitignore", "fail", f"git check-ignore failed for /{rel}: rc={ign_proc.returncode}"))
-            return checks
-
-    if missing:
-        checks.append(_check("gitignore", "fail", "missing gitignore rule(s): " + ", ".join(missing)))
-    else:
-        checks.append(_check("gitignore", "ok", f"/{(docs_rel / 'runs').as_posix()}/ and /{(docs_rel / 'sessions').as_posix()}/ ignored"))
     return checks
 
 

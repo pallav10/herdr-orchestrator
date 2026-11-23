@@ -12,7 +12,6 @@ from typing import Any, NoReturn
 
 import harnesses
 import ioutil
-import session_docs
 from herdr_cli import herdr, is_core_mode
 
 CONTEXT_SOURCE = "OMP ExtensionContext.getContextUsage"
@@ -109,16 +108,12 @@ def _require_chosen_herdr() -> None:
 
 
 def _holder_identity(session: Path | None, holder: dict[str, str]) -> tuple[str, str]:
-    if session is None:
-        workspace = holder.get("workspace") if isinstance(holder, dict) else None
-        pane = holder.get("pane") if isinstance(holder, dict) else None
-        if not isinstance(workspace, str) or not workspace.strip() or not isinstance(pane, str) or not pane.strip():
-            _refuse("holder workspace and pane are required")
-    else:
-        try:
-            workspace, pane = session_docs.holder_identity(session, holder)
-        except (ioutil.PreconditionError, ioutil.UsageError) as exc:
-            _refuse(str(exc))
+    if not isinstance(holder, dict):
+        _refuse("holder must be an object")
+    workspace = holder.get("workspace")
+    pane = holder.get("pane")
+    if not isinstance(workspace, str) or not workspace.strip() or not isinstance(pane, str) or not pane.strip():
+        _refuse("holder workspace and pane are required")
     if not is_core_mode() and not pane.startswith(f"{workspace}:"):
         _refuse("pane id is not an exact workspace prefix")
     return workspace, pane

@@ -30,7 +30,7 @@ WAIT = 0.5
 CLI_NAMES = (
     "spawn-agent.py", "prompt-agent.py", "dispatch-agent.py", "retire-agents.py",
     "collect-agent.py", "finish-agent.py", "ack-handoff.py", "rotate.py",
-    "reconcile.py", "init-docs.py",
+    "reconcile.py",
 )
 
 
@@ -188,7 +188,6 @@ def child(action, args):
     import ledger
     import promotion
     import scheduler
-    import session_docs
     from testkit import load_script
 
     instrument_wait()
@@ -204,8 +203,7 @@ def child(action, args):
     holder = config["holder"]
     node = config.get("node", "H")
     timeout = float(config.get("timeout", WAIT))
-    modules = {"ledger": ledger, "promotion": promotion, "scheduler": scheduler,
-               "session_docs": session_docs, "authz": authz}
+    modules = {"ledger": ledger, "promotion": promotion, "scheduler": scheduler, "authz": authz}
     if action == "cli":
         module = load_script(args[0])
         if hasattr(module, "herdr"):
@@ -312,8 +310,6 @@ def child(action, args):
                 module.successor_transfer_matches(run, holder, "test-nonce", {}, lock_timeout=timeout)
             elif name == "reconcile._recorded_herdr_identities":
                 module._recorded_herdr_identities(run, lock_timeout=timeout)
-            elif name == "session_docs.open_session":
-                session_docs.open_session(Path(config["docs"]), job="system", template_dir=SCRIPTS.parent / "references" / "templates", run=str(run), lock_timeout=timeout)
             else:
                 raise RuntimeError(name)
         cli_common.run(invoke)
@@ -483,13 +479,11 @@ class Fixture:
         if name == "retire-agents.py":
             return ["h", "--run", str(self.run), *self.auth()]
         if name == "ack-handoff.py":
-            return ["--nonce", "test-nonce", "--session", self.holder["session"]]
+            return ["--nonce", "test-nonce", "--run", str(self.run)]
         if name == "rotate.py":
-            return ["--session", self.holder["session"]]
+            return ["--run", str(self.run)]
         if name == "reconcile.py":
             return ["--run", str(self.run), *self.auth(), "--event", json.dumps({"type": "notification_sent", "key": "system"})]
-        if name == "init-docs.py":
-            return ["--dir", str(self.docs), "--job", "system", "--run", str(self.run)]
         raise AssertionError(name)
 
     def launch(self, name, *, timeout=WAIT, **config):
@@ -774,7 +768,6 @@ class LockSystem(unittest.TestCase):
             ("rotate.start_lease_drain", "ready", "ledger.append_event_locked"),
             ("rotate.successor_transfer_matches", "ready", "ledger.replay"),
             ("reconcile._recorded_herdr_identities", "ready", "ledger.replay"),
-            ("session_docs.open_session", "ready", "ledger.replay"),
             ("collect-agent.py", "running", "ioutil.atomic_text"),
             ("finish-agent.py", "integration", "ioutil.atomic_text"),
             ("ack-handoff.py", "drained", "ledger.append_event_locked"),

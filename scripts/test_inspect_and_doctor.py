@@ -263,34 +263,24 @@ class DoctorTests(unittest.TestCase):
     def _checks_map(self, payload: dict) -> dict[str, dict]:
         return {item["name"]: item for item in payload["checks"]}
 
-    def test_gitignore_pass_and_fail_with_skip_herdr(self) -> None:
+    def test_repo_and_state_dir_checks_pass_without_gitignore_rules(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo = seed_repo(Path(td) / "repo")
-
-            # Missing .gitignore rules -> fail (exit 3)
-            code, out, err = run_module(doctor_mod, ["doctor.py", "--repo", str(repo), "--skip-herdr"])
-            self.assertEqual(code, 3, err)
+            state_dir = Path(td) / "state"
+            with mock.patch.dict(os.environ, {"HERDR_ORCHESTRATOR_STATE_DIR": str(state_dir)}, clear=False):
+                code, out, err = run_module(doctor_mod, ["doctor.py", "--repo", str(repo), "--skip-herdr"])
+            self.assertEqual(code, 0, err)
             payload = json.loads(out)
-            self.assertFalse(payload["ok"])
+            self.assertTrue(payload["ok"])
             checks = self._checks_map(payload)
             self.assertEqual(checks["python"]["status"], "ok")
             self.assertEqual(checks["fcntl"]["status"], "ok")
+            self.assertEqual(checks["sqlite3"]["status"], "ok")
+            self.assertEqual(checks["state_dir"]["status"], "ok")
             self.assertEqual(checks["git_repo"]["status"], "ok")
             self.assertEqual(checks["git_worktree"]["status"], "ok")
-            self.assertEqual(checks["gitignore"]["status"], "fail")
-            self.assertIn("/docs/runs/", checks["gitignore"]["detail"])
-            self.assertIn("/docs/sessions/", checks["gitignore"]["detail"])
-
-            # Add ignore rules and commit -> pass (exit 0)
-            commit_file(repo, ".gitignore", "/docs/runs/\n/docs/sessions/\n", "ignore runtime docs")
-            code2, out2, err2 = run_module(doctor_mod, ["doctor.py", "--repo", str(repo), "--skip-herdr"])
-            self.assertEqual(code2, 0, err2)
-            payload2 = json.loads(out2)
-            self.assertTrue(payload2["ok"])
-            checks2 = self._checks_map(payload2)
-            self.assertEqual(checks2["gitignore"]["status"], "ok")
-            self.assertEqual(checks2["git_clean"]["status"], "ok")
-
+            self.assertEqual(checks["git_clean"]["status"], "ok")
+            self.assertNotIn("gitignore", checks)
     def test_missing_herdr_env_and_mocked_protocol_check(self) -> None:
         clean_env = {k: v for k, v in os.environ.items() if not k.startswith("HERDR_")}
         with (

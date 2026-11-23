@@ -20,11 +20,10 @@ Managed-name ownership assumes exclusive orchestrator ownership of the reserved 
 Before opening a run that will dispatch to existing user-owned panes, pass every target to initialization:
 
 ```sh
-python3 scripts/init-docs.py --dir /absolute/repo/docs --job change-name --pane w4E:p0 --pane w4E:p1
+python3 scripts/ho.py init --job change-name --pane w4E:p0 --pane w4E:p1
 ```
 
-Each `--pane` performs read-only `agent get` through the shared Herdr boundary and requires the same server-issued `agent_id`/`id` as dispatch. A missing stable ID exits 3 with remediation; ambiguous targets and protocol mismatches propagate the CLI error (exit 1). All targets must pass before any run/session creation or binding. No pane is enrolled, stamped, or prompted by preflight. Without `--pane`, initialization remains offline-capable for native or managed-worker plans; it does not certify user-owned pane support. Direct `session_docs.open_session` callers must perform this CLI preflight before creating metadata for a user-pane plan.
-
+Each `--pane` performs read-only `agent get` through the shared Herdr boundary and requires the same server-issued `agent_id`/`id` as dispatch. A missing stable ID exits 3 with remediation; ambiguous targets and protocol mismatches propagate the CLI error (exit 1). All targets must pass before any run creation or binding. No pane is enrolled, stamped, or prompted by preflight. Without `--pane`, initialization remains offline-capable for native or managed-worker plans; it does not certify user-owned pane support.
 Live read-only discovery on session `flowops` confirmed CLI 0.9.5/server 0.9.3, protocol 22, `endpoint_compatible=yes`, and `private_protocol_compatible=yes`. `agent get qrp-services` reports `workspace_id=w4E`, `pane_id=w4E:p0`, `terminal_id`, and `agent_session`, but no `agent_id`/`id`. This schema is **unsupported for user-owned pane dispatch**. Preflight only refuses earlier; it does not restore `qrp-services` dispatch. Do not change a required existing-pane task into a managed-worker task and call it fixed.
 
 Preflight is a capability check, not an identity reservation. Dispatch and continuation still re-read live identity and compare recorded workspace, pane, agent ID, and run/node/attempt tokens; replacement or conflicting evidence remains a refusal. The documented Herdr 0.8.2/protocol 20 compatibility target does not imply that every user-owned pane exposes a runtime ID.

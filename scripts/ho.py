@@ -30,7 +30,6 @@ import ioutil
 import ledger
 import promotion
 import scheduler
-import session_docs
 import run_store
 import state_paths
 from herdr_cli import current_holder_env, herdr
@@ -53,33 +52,7 @@ def _ho_cmd(*args: str) -> str:
     return _cmd_str(["python3", str(HO_SCRIPT), *args])
 
 
-def _find_docs_root(explicit: str | None) -> Path | None:
-    if explicit:
-        return Path(ioutil.canonical_path(Path(explicit).expanduser().resolve()))
-    cwd = Path.cwd().resolve()
-    for candidate in (cwd, *cwd.parents):
-        docs = candidate / "docs"
-        if (docs / session_docs.SESSIONS_DIR).is_dir():
-            return docs
-        if (candidate / ".git").exists():
-            return docs if docs.is_dir() else None
-    return None
-
-
-def _discover_session_for_pane(docs_root: Path, workspace: str, pane: str) -> tuple[Path, Path]:
-    sessions = session_docs.ordered_sessions(docs_root)
-    matches: list[tuple[Path, Path]] = []
-    for session_dir, meta in sessions:
-        if meta.get("workspace") == workspace and meta.get("pane") == pane:
-            run_raw = meta.get("run")
-            if isinstance(run_raw, str) and run_raw.strip():
-                matches.append((Path(ioutil.canonical_path(session_dir)), Path(ioutil.canonical_path(run_raw))))
-    if not matches:
-        raise ioutil.PreconditionError(
-            f"no session under {docs_root} matches pane ({workspace}, {pane}); "
-            f"run `{_ho_cmd('init', '--dir', str(docs_root), '--job', '<job>')}` or pass --run/--session"
-        )
-    return matches[-1]
+UNKNOWN_OWNER = "unknown"
 
 
 def _resolve_context(
@@ -94,23 +67,11 @@ def _resolve_context(
     pane = getattr(args, "holder_pane", None) or env_pane
     session_raw = getattr(args, "session", None)
     run_raw = getattr(args, "run", None)
-    docs_raw = getattr(args, "docs", None)
 
-    session_path: Path | None = None
-    session_id_str: str | None = None
-    if session_raw:
-        if str(session_raw).startswith("epoch-"):
-            session_id_str = str(session_raw)
-        else:
-            session_path = Path(ioutil.canonical_path(session_raw))
-            session_id_str = str(session_path)
+    session_id_str: str | None = str(session_raw) if session_raw else None
     run_path: Path | None = Path(ioutil.canonical_path(run_raw)) if run_raw else None
 
-    if session_path is not None and run_path is None:
-        run_path = session_docs.session_run(session_path)
-
-    # 1. Try XDG index.db lookup first (unless explicit --docs was passed)
-    if docs_raw is None and (run_path is None or session_id_str is None) and workspace and pane:
+    if (run_path is None or session_id_str is None) and workspace and pane:
         indexed = state_paths.lookup_pane(workspace, pane)
         if indexed is not None:
             idx_run = Path(ioutil.canonical_path(indexed["run_dir"]))
@@ -119,33 +80,10 @@ def _resolve_context(
                     run_path = idx_run
                 if session_id_str is None and indexed.get("session_id"):
                     session_id_str = str(indexed["session_id"])
-                    if not session_id_str.startswith("epoch-"):
-                        session_path = Path(session_id_str)
-
-    # 2. Fallback to legacy docs/sessions discovery
-    if session_id_str is None and (require_holder or run_path is None):
-        docs_root = _find_docs_root(docs_raw)
-        if docs_root is not None and workspace and pane:
-            try:
-                disc_session, disc_run = _discover_session_for_pane(docs_root, workspace, pane)
-                if run_path is None or run_path == disc_run:
-                    session_path = disc_session
-                    session_id_str = str(disc_session)
-                    if run_path is None:
-                        run_path = disc_run
-                else:
-                    for sdir, meta in reversed(session_docs.ordered_sessions(docs_root)):
-                        if meta.get("workspace") == workspace and meta.get("pane") == pane and meta.get("run") == str(run_path):
-                            session_path = Path(ioutil.canonical_path(sdir))
-                            session_id_str = str(session_path)
-                            break
-            except ioutil.PreconditionError:
-                if run_path is None:
-                    raise
 
     if run_path is None and require_run:
         raise ioutil.PreconditionError(
-            f"cannot resolve active run: set HERDR_WORKSPACE_ID/HERDR_PANE_ID or pass --run/--session, "
+            f"cannot resolve active run: set HERDR_WORKSPACE_ID/HERDR_PANE_ID or pass --run, "
             f"or initialize with `{_ho_cmd('init', '--job', '<job>')}`"
         )
 
@@ -155,16 +93,12 @@ def _resolve_context(
         ctrl = snap.get("controller") if isinstance(snap.get("controller"), dict) else {}
         if session_id_str is None and isinstance(ctrl.get("session"), str) and ctrl["session"]:
             if (not workspace or ctrl.get("workspace") == workspace) and (not pane or ctrl.get("pane") == pane):
-                if not require_holder or run_store.has_db(run_path):
-                    session_id_str = ctrl["session"]
-                    if not session_id_str.startswith("epoch-"):
-                        session_path = Path(ioutil.canonical_path(session_id_str))
+                session_id_str = ctrl["session"]
         if not require_holder:
             if workspace is None and isinstance(ctrl.get("workspace"), str) and ctrl["workspace"]:
                 workspace = ctrl["workspace"]
             if pane is None and isinstance(ctrl.get("pane"), str) and ctrl["pane"]:
                 pane = ctrl["pane"]
-
     holder: dict[str, str] | None = None
     if workspace and pane and session_id_str:
         holder = {"workspace": workspace, "pane": pane, "session": session_id_str}
@@ -193,7 +127,7 @@ def _resolve_context(
 
     return {
         "run": run_path,
-        "session": session_path if session_path is not None else session_id_str,
+        "session": session_id_str,
         "session_id": session_id_str,
         "workspace": workspace,
         "pane": pane,
@@ -442,13 +376,13 @@ def _init_xdg_run(args: argparse.Namespace) -> dict[str, Any]:
     from herdr_cli import runtime_agent_id
     for target in args.pane or []:
         info = herdr("agent", "get", target)
-        if not runtime_agent_id(info):
-            raise ioutil.PreconditionError(f"user-owned pane {target!r} has no stable runtime agent_id/id")
+        agent = info.get("result", {}).get("agent") if isinstance(info.get("result"), dict) else info
+        runtime_agent_id(agent if isinstance(agent, dict) else {}, target)
 
     workspace, pane = current_holder_env()
     has_identity = bool(workspace and pane)
-    ws_val = workspace or session_docs.UNKNOWN_OWNER
-    pane_val = pane or session_docs.UNKNOWN_OWNER
+    ws_val = workspace or UNKNOWN_OWNER
+    pane_val = pane or UNKNOWN_OWNER
 
     repo_root: str | None = None
     if getattr(args, "repo", None):
@@ -509,18 +443,7 @@ def _init_xdg_run(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
-    if args.dir:
-        argv = [sys.executable, str(SCRIPTS / "init-docs.py"), "--dir", args.dir, "--job", args.job]
-        if args.new:
-            argv.append("--new")
-        if args.run:
-            argv += ["--run", args.run]
-        for p in args.pane or []:
-            argv += ["--pane", p]
-        argv += ["--lock-timeout", str(args.lock_timeout)]
-        result = cli_common.run_child(argv, "init-docs.py")
-    else:
-        result = _init_xdg_run(args)
+    result = _init_xdg_run(args)
     run_path = result.get("run")
     next_cmd = _ho_cmd("accept", "--graph", "<graph.json>", "--run", run_path) if isinstance(run_path, str) else _ho_cmd("next")
     print(json.dumps({**result, "next_command": next_cmd}))
@@ -849,13 +772,9 @@ def _cmd_brief(args: argparse.Namespace) -> int:
 
 def _cmd_rotate(args: argparse.Namespace) -> int:
     ctx = _resolve_context(args, require_run=True, require_holder=True)
-    argv = [sys.executable, str(SCRIPTS / "rotate.py")]
-    if run_store.has_db(ctx["run"]):
-        argv += ["--run", str(ctx["run"])]
-        if args.focus:
-            argv += ["--focus", args.focus]
-    else:
-        argv += ["--session", str(ctx["session"])]
+    argv = [sys.executable, str(SCRIPTS / "rotate.py"), "--run", str(ctx["run"])]
+    if args.focus:
+        argv += ["--focus", args.focus]
     if args.label:
         argv += ["--label", args.label]
     if args.kind:
@@ -871,13 +790,7 @@ def _cmd_rotate(args: argparse.Namespace) -> int:
 
 
 def _cmd_ack(args: argparse.Namespace) -> int:
-    argv = [sys.executable, str(SCRIPTS / "ack-handoff.py"), "--nonce", args.nonce]
-    if args.run:
-        argv += ["--run", args.run]
-    elif args.session:
-        argv += ["--session", args.session]
-    else:
-        raise ioutil.UsageError("ack requires --run or --session")
+    argv = [sys.executable, str(SCRIPTS / "ack-handoff.py"), "--nonce", args.nonce, "--run", args.run]
     argv += ["--lock-timeout", str(args.lock_timeout)]
     result = cli_common.run_child(argv, "ack-handoff.py")
     print(json.dumps(result))
@@ -896,8 +809,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ho.py", description="Unified CLI for herdr-orchestrator.")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_init = sub.add_parser("init", help="Initialize a durable run (XDG SQLite by default; --dir for legacy docs/)")
-    p_init.add_argument("--dir", default=None, help="legacy docs root directory (omit for XDG SQLite storage)")
+    p_init = sub.add_parser("init", help="Initialize a durable SQLite WAL run under XDG state")
     p_init.add_argument("--repo", default=None, help="target git repo path (auto-detected from cwd if omitted)")
     p_init.add_argument("--job", required=True, help="job name")
     p_init.add_argument("--new", action="store_true")
@@ -995,11 +907,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_ack = sub.add_parser("ack", help="Acknowledge controller handoff in successor pane")
     p_ack.add_argument("--nonce", required=True)
-    p_ack.add_argument("--run", default=None)
-    p_ack.add_argument("--session", default=None)
+    p_ack.add_argument("--run", required=True)
     cli_common.add_lock_timeout_arg(p_ack)
     p_ack.set_defaults(func=_cmd_ack)
-
     return parser
 
 def main() -> int:

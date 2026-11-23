@@ -25,7 +25,7 @@ def runtime_agent_id(agent: dict[str, Any], target: str) -> str:
             f"live agent missing stable id for {target}: user-owned pane dispatch "
             "requires server-issued agent_id/id; terminal_id, agent_session, names "
             "and pane addresses are not supported replacement-safe identities. "
-            "Preflight with init-docs.py --pane TARGET before creating metadata. "
+            "Preflight with `ho.py init --pane TARGET` before creating metadata. "
             "Restoring dispatch to this existing pane requires upstream Herdr "
             "agent-incarnation identity and identity-conditional prompt delivery; "
             "see references/identity-reattach.md#required-upstream-agent-incarnation-contract. "
