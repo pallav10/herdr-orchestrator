@@ -8,7 +8,7 @@
 
 *Dependency graphs, isolated Git worktrees, ownership gates, receipt-backed promotion, and seamless controller rotation across **OMP, Claude Code, Codex, Copilot CLI, Pi, Grok Build**, and custom CLI harnesses — built on zero-dependency Python stdlib.*
 
-[![Version](https://img.shields.io/badge/version-1.8.0-6366F1?style=flat-square)](package.json)
+[![Version](https://img.shields.io/badge/version-2.0.0-6366F1?style=flat-square)](package.json)
 [![Python](https://img.shields.io/badge/python-3%20stdlib%20only-38BDF8?style=flat-square&logo=python&logoColor=white)](#requirements)
 [![Harnesses](https://img.shields.io/badge/harnesses-OMP%20%7C%20Claude%20%7C%20Codex%20%7C%20Copilot%20%7C%20Pi%20%7C%20Grok-10B981?style=flat-square)](#supported-harnesses)
 [![Backends](https://img.shields.io/badge/backends-herdr%20%7C%20herdr--core%20(hc)-8B5CF6?style=flat-square)](#requirements)
@@ -27,12 +27,11 @@ Running one coding agent is easy. Coordinating **five parallel agents** across a
 **`herdr-orchestrator`** turns one [Herdr](https://github.com/herdrdev/herdr) (or `herdr-core` / `hc`) controller pane into a **fault-tolerant, event-sourced control plane** for AI coding workers:
 
 - **Harness-agnostic by design** — run any supported CLI harness as controller or worker, even mixing harnesses per node in the same `graph.json`.
-- **Event-sourced run ledger** — append-only `events.jsonl` is the sole execution authority; crash or rotate the controller at any point and replay exact state.
+- **Per-run SQLite WAL ledger & zero repo pollution** — state lives under `${XDG_STATE_HOME:-~/.local/state}/herdr-orchestrator/` (`run.db` + content-addressed `blobs/` + rebuildable `index.db`). Zero `.gitignore` edits, zero `.md` handoff files, works seamlessly across Git worktrees.
 - **Isolated Git worktrees & ownership gates** — concurrent writers operate in separate worktrees with disjoint `owns` globs, verified before anything is accepted.
 - **Receipt-backed completion & CAS promotion** — workers cannot self-declare success; outputs are hashed, verified, and compare-and-swapped onto a run-owned ref without touching your primary branch.
-- **Seamless controller rotation** — when context occupancy reaches ≥ 50% (measured via native hooks/extensions), drain the lease and hand off to a fresh controller pane while workers keep running undisturbed.
-- **Zero third-party dependencies** — pure Python 3 standard library (`fcntl`, `json`, `subprocess`). No build step, no daemon, no database.
-
+- **Seamless zero-markdown controller rotation** — record structured notes (`ho note add`) in `run.db`; when context occupancy reaches ≥ 50%, `ho rotate --focus "..."` drains the lease and synthesizes the successor prompt dynamically from the ledger.
+- **Zero third-party dependencies** — pure Python 3 standard library (`sqlite3`, `fcntl`, `json`, `subprocess`). No build step, no daemon.
 ---
 
 ## Why Herdr Orchestrator?
@@ -144,26 +143,18 @@ python3 scripts/doctor.py
 
 Run live orchestration commands from inside a Herdr controller pane (`HERDR_ENV=1` for legacy Herdr, or `HC_TERMINAL_ID` for `herdr-core`).
 
-### 1. Gitignore runtime state in your target repository
+### 1. Initialize a run (zero `.gitignore` needed)
 
-```gitignore
-/docs/sessions/
-/docs/runs/
-```
-
-*(Initialization fails closed with exit code `3` if these paths are not gitignored.)*
-
-### 2. Initialize a session and run
-
-Use the unified front-door CLI **`scripts/ho.py`** — it auto-resolves legacy Herdr (`HERDR_WORKSPACE_ID`/`HERDR_PANE_ID`) or `herdr-core` (`HC_TERMINAL_ID`), canonical `session`/`run`, and current `epoch`:
+Use the unified front-door CLI **`scripts/ho.py`** — it stores state in `${XDG_STATE_HOME:-~/.local/state}/herdr-orchestrator/runs/<run-id>/run.db` (overridable via `HERDR_ORCHESTRATOR_STATE_DIR`) and auto-resolves legacy Herdr (`HERDR_WORKSPACE_ID`/`HERDR_PANE_ID`) or `herdr-core` (`HC_TERMINAL_ID`), active run, and current `epoch` via `index.db`:
 
 ```sh
 HO="python3 /abs/path/to/herdr-orchestrator/scripts/ho.py"
 
-$HO init --dir /abs/path/to/target-repo/docs --job my-feature
+$HO init --job my-feature
 ```
 
-### 3. Accept a dependency graph
+*(Legacy `<repo>/docs/` mode remains available via `$HO init --dir /abs/path/to/repo/docs --job my-feature`.)*
+### 2. Accept a dependency graph
 
 Render a built-in template, optionally pin `default_kind` or per-node `kind`, lint it, and accept:
 
@@ -176,7 +167,7 @@ $HO accept --graph /tmp/graph.json
 
 Graph acceptance validates dependencies and file ownership, pins the repository `HEAD`, and initializes `refs/heads/herdr/<run-id>`.
 
-### 4. Loop on `ho next` until `phase == "done"`
+### 3. Loop on `ho next` until `phase == "done"`
 
 ```sh
 $HO next
@@ -225,7 +216,8 @@ Every adapter emits a single JSON object (or flushed JSONL for monitoring) and s
 
 | Operation | Script | Responsibility |
 | :--- | :--- | :--- |
-| **Unified Loop** | `scripts/ho.py` | Front-door CLI (`init`, `accept`, `next`, `dispatch`, `monitor`, `finish`, `promote`, `retire`, `status`) with auto-context |
+| **Unified Loop** | `scripts/ho.py` | Front-door CLI (`init`, `accept`, `next`, `dispatch`, `monitor`, `finish`, `promote`, `retire`, `status`, `note`, `brief`, `rotate`, `ack`) with XDG `index.db` auto-context |
+| **Storage Engine** | `scripts/state_paths.py`, `run_store.py` | XDG state root, rebuildable `index.db`, per-run SQLite WAL `run.db`, content-addressed `blobs/`, dynamic brief synthesis |
 | **Harness Registry** | `scripts/harnesses.py` | Canonical aliases, per-harness CLI flags, role lookup, process matching, and XDG state paths |
 | **Validate & Render** | `scripts/validate-graph.py`, `render-graph.py` | Offline Tarjan SCC cycle/overlap linter + parameterized templates (`references/templates/graphs/`) |
 | **Wave & Script** | `scripts/dispatch-wave.py`, `run-script.py` | Critical-path/fan-out ranked wave dispatch + deterministic `script` executor |
@@ -242,22 +234,14 @@ Every adapter emits a single JSON object (or flushed JSONL for monitoring) and s
 ## State and Safety
 
 ```text
-docs/
-├── sessions/<id>/
-│   ├── session.json              # Canonical run locator
-│   ├── progress.md
-│   ├── HANDOFF.md
-│   └── NEXT-SESSION-PROMPT.md
+${XDG_STATE_HOME:-~/.local/state}/herdr-orchestrator/
+├── context/                      # Measured context snapshots (OMP / Claude Code)
+├── index.db                      # Rebuildable SQLite WAL lookup: (ws, pane) -> active run
 └── runs/<run-id>/
-    ├── run.json                  # Immutable run metadata & pinned base SHA
-    ├── graph.json                # Accepted dependency graph (optional default_kind / node.kind)
-    ├── events.jsonl              # Sole execution authority (append-only)
-    ├── graph-revisions/          # Immutable accepted graph payloads
-    ├── artifacts/<node>/<n>/     # Prompts, logs, transcripts, hashed receipts
-    ├── state.json                # Replay projection (cache)
-    ├── controller.json           # Replay projection (cache)
-    ├── status.md                 # Human-readable status projection
-    └── run.lock                  # POSIX fcntl lock (--lock-timeout, default 120s)
+    ├── run.db                    # Authoritative SQLite WAL store (events, state, controller, revisions, notes)
+    ├── run.lock                  # POSIX fcntl lock strictly for external side-effect sections (herdr/git)
+    ├── blobs/<sha256>            # Write-once content-addressed payloads (prompts, diffs, transcripts)
+    └── artifacts/<node>/<n>/     # Per-attempt receipts and dispatch identities
 ```
 
 ### Core Invariants

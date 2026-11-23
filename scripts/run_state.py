@@ -28,7 +28,7 @@ from ledger import (
     _pending_promotion_intent, _normalize_dispatch_model, _normalize_blocked_continuation,
     _validate_run_scoped_event, _validate_event_append, _apply_event, _runtime_overlay, _apply_graph_revision,
     replay, load_state, recorded_herdr_identity, _previous_promotion_sha, derive_status_md, write_caches,
-    _materialize_locked, _EVENT_TO,
+    _materialize_locked, _EVENT_TO, record_note, list_notes,
 )
 from authz import (
     dispatch_guard,
@@ -65,4 +65,10 @@ from ownership import (
 from verdict import (
     VERDICT_FILENAME, VERDICT_STATUSES, findings_hash, validate_verdict,
     load_and_validate_verdict, detect_rework_stagnation,
+)
+from run_store import (
+    NOTE_KINDS, put_blob, get_blob, synthesize_brief, has_db,
+)
+from state_paths import (
+    state_root, runs_root, register_run, bind_pane, lookup_pane, list_runs, rebuild_index,
 )

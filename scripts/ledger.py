@@ -22,6 +22,8 @@ import tempfile
 import time
 import uuid
 import verdict
+import run_store
+import state_paths
 from ioutil import PreconditionError, RunError, UsageError, _git_ref, _now, _read_json, _run_git, slug, consumed_items, atomic_json, atomic_text, canonical_path, run_cmd, sha256_file
 from graph_model import HERDR_EXECUTORS, HOLDER_KEYS, LEASE_ACTIVE, LEASE_DRAINING, MODEL_KEYS, NODE_ID_RE, RETRY_ON, RUNTIME_KEYS, SCHEMA_VERSION, STATES, _as_list, _attempt_int, _check_holder, _condition_true, _eligible_blocked_continuation, _holder_payload, _request_fields, _required_attempt, _retry_allows, artifact_name, current_artifact, has_current_dispatch_intent, herdr_command_target, herdr_identity_matches, holder_exact, output_specs, require_active_holder, validate_continuation_routing, validate_graph, validate_model
 
@@ -40,14 +42,35 @@ _EVENT_TO = {
 }
 
 
-def claim_run(docs_root: str | Path, job: str, *, created: str | None = None) -> dict[str, Any]:
-    docs_abs = Path(canonical_path(docs_root))
-    root = docs_abs / "runs"
-    if root.exists() and (root.is_symlink() or not root.is_dir()):
-        raise PreconditionError("docs/runs must be a real directory")
-    root.mkdir(parents=True, exist_ok=True)
-    if root.is_symlink() or not root.is_dir():
-        raise PreconditionError("docs/runs must be a real directory")
+def claim_run(
+    docs_root: str | Path | None = None,
+    job: str = "",
+    *,
+    created: str | None = None,
+    storage: str = "auto",
+    repo: str | Path | None = None,
+    state_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Create and return a new run directory.
+
+    When `docs_root` is None (the v2 default), creates a SQLite-backed run under
+    XDG state (`state_paths.runs_root(state_dir)`) with zero repo `.gitignore`
+    or `.md` files. When `docs_root` is provided, creates a run under
+    `<docs_root>/runs/` (legacy file-backed unless `storage='sqlite'`).
+    """
+    if docs_root is None:
+        root = state_paths.runs_root(state_dir)
+        use_sqlite = storage != "jsonl"
+    else:
+        docs_abs = Path(canonical_path(docs_root))
+        root = docs_abs / "runs"
+        if root.exists() and (root.is_symlink() or not root.is_dir()):
+            raise PreconditionError("docs/runs must be a real directory")
+        root.mkdir(parents=True, exist_ok=True)
+        if root.is_symlink() or not root.is_dir():
+            raise PreconditionError("docs/runs must be a real directory")
+        use_sqlite = storage == "sqlite"
+
     if created is None:
         dt = _dt.datetime.now(_dt.timezone.utc)
     elif isinstance(created, _dt.datetime):
@@ -70,7 +93,8 @@ def claim_run(docs_root: str | Path, job: str, *, created: str | None = None) ->
 
     run_abs = canonical_path(run_dir)
     if Path(run_abs).parent != Path(canonical_path(root)):
-        raise PreconditionError("run path escaped docs/runs")
+        raise PreconditionError("run path escaped runs root")
+    repo_common = state_paths.git_common_dir(repo) if repo is not None else (state_paths.git_common_dir() if docs_root is None else None)
     run = {
         "id": run_id,
         "job": str(job),
@@ -79,19 +103,31 @@ def claim_run(docs_root: str | Path, job: str, *, created: str | None = None) ->
         "path": run_abs,
         "base_sha": None,
         "promotion_ref": None,
-        "repo": None,
+        "repo": canonical_path(repo) if repo is not None else None,
+        **({"repo_common_dir": repo_common, "storage": "sqlite"} if use_sqlite else {}),
     }
     controller = {"epoch": 1, "workspace": None, "pane": None, "session": None, "run": run_abs, "dispatch": False, "lease": LEASE_ACTIVE}
     state = {"schema_version": SCHEMA_VERSION, "run": run_abs, "epoch": 1, "nodes": {}, "notified": []}
-    atomic_json(run_dir / "run.json", run)
-    atomic_text(run_dir / "events.jsonl", "")
-    atomic_json(run_dir / "graph.json", {"schema_version": SCHEMA_VERSION, "run": run_abs, "nodes": {}})
-    atomic_json(run_dir / "controller.json", controller)
-    atomic_json(run_dir / "state.json", state)
-    atomic_text(run_dir / "status.md", derive_status_md(state, {"nodes": {}}))
+    initial_graph = {"schema_version": SCHEMA_VERSION, "run": run_abs, "nodes": {}}
     (run_dir / "artifacts").mkdir()
+    if use_sqlite:
+        run_store.init_db(run_dir, run=run, controller=controller, state=state, graph=initial_graph)
+        state_paths.register_run(
+            run_id,
+            run_abs,
+            job=str(job),
+            repo_common_dir=repo_common,
+            created_at=run["created"],
+            override=state_dir,
+        )
+    else:
+        atomic_json(run_dir / "run.json", run)
+        atomic_text(run_dir / "events.jsonl", "")
+        atomic_json(run_dir / "graph.json", initial_graph)
+        atomic_json(run_dir / "controller.json", controller)
+        atomic_json(run_dir / "state.json", state)
+        atomic_text(run_dir / "status.md", derive_status_md(state, {"nodes": {}}))
     return load_run(run_dir)
-
 
 def load_run(path) -> dict[str, Any]:
     """Return the run document (no nodes)."""
@@ -101,12 +137,19 @@ def load_run(path) -> dict[str, Any]:
 
 
 def _run_from_revision(run_dir: Path, committed: dict[str, Any] | None) -> dict[str, Any]:
-    run = dict(committed["run"]) if committed is not None else _read_json(run_dir / "run.json")
+    if committed is not None:
+        run = dict(committed["run"])
+    elif run_store.has_db(run_dir):
+        loaded = run_store.read_kv(run_dir, "run")
+        if not isinstance(loaded, dict):
+            raise PreconditionError(f"run metadata missing in {run_dir / run_store.DB_NAME}")
+        run = dict(loaded)
+    else:
+        run = _read_json(run_dir / "run.json")
     if run.get("path") != canonical_path(run_dir):
         raise PreconditionError(f"run.json.path mismatch: {run.get('path')!r}")
     run["dir"] = canonical_path(run_dir)
     return run
-
 
 def bind_session_run(run_dir, holder=None, *, lock_timeout=120) -> dict[str, Any]:
     """Return {state, controller, event}."""
@@ -138,11 +181,15 @@ def _revision_path(run_dir: Path, revision: str) -> Path:
 
 
 def _load_graph_revision(run_dir: Path, revision: str) -> dict[str, Any]:
-    payload = _read_json(_revision_path(run_dir, revision))
+    if run_store.has_db(run_dir):
+        payload = run_store.load_graph_revision(run_dir, revision)
+        if payload is None:
+            raise PreconditionError(f"missing graph revision {revision}")
+    else:
+        payload = _read_json(_revision_path(run_dir, revision))
     if not isinstance(payload.get("run"), dict) or not isinstance(payload.get("graph"), dict) or _revision_digest(payload) != revision:
         raise PreconditionError("graph revision payload mismatch")
     return payload
-
 
 def _committed_graph_revision(run_dir: Path, events: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
     if events is None:
@@ -167,12 +214,17 @@ def load_graph(run_dir: str | Path) -> dict[str, Any]:
 
 
 def _graph_from_revision(run_dir: Path, committed: dict[str, Any] | None) -> dict[str, Any]:
-    graph = dict(committed["graph"]) if committed is not None else _read_json(run_dir / "graph.json")
+    if committed is not None:
+        graph = dict(committed["graph"])
+    elif run_store.has_db(run_dir):
+        loaded = run_store.read_kv(run_dir, "graph")
+        graph = dict(loaded) if isinstance(loaded, dict) else {"schema_version": SCHEMA_VERSION, "nodes": {}}
+    else:
+        graph = _read_json(run_dir / "graph.json")
     if not isinstance(graph, dict):
         raise PreconditionError("graph.json must be an object")
     graph.setdefault("nodes", {})
     return graph
-
 
 def load_accepted_graph(run_dir: str | Path) -> dict[str, Any]:
     """Read the accepted graph through committed revisions, never its derived cache alone."""
@@ -263,8 +315,9 @@ def _materialize_graph_revision_locked(run_dir: Path, payload: dict[str, Any]) -
     graph = payload["graph"]
     if payload.get("initialize_ref"):
         _refuse_checked_out_promotion_ref(run["repo"], run["promotion_ref"])
-    atomic_json(run_dir / "run.json", run)
-    atomic_json(run_dir / "graph.json", graph)
+    if not run_store.has_db(run_dir):
+        atomic_json(run_dir / "run.json", run)
+        atomic_json(run_dir / "graph.json", graph)
     if payload.get("initialize_ref"):
         repo = run["repo"]
         ref = run["promotion_ref"]
@@ -273,7 +326,6 @@ def _materialize_graph_revision_locked(run_dir: Path, payload: dict[str, Any]) -
             if any(event.get("type") == "promoted" and event.get("ref") == ref for event in events):
                 raise PreconditionError("promoted ref is missing; refusing to reset it to base")
             _run_git(repo, "update-ref", ref, run["base_sha"])
-
 
 def accept_graph(run_dir, graph: dict[str, Any], *, repo: str | Path, holder=None, lock_timeout=120) -> dict[str, Any]:
     """Return the accepted graph document (schema_version, run, base_sha, promotion_ref, nodes)."""
@@ -323,13 +375,21 @@ def accept_graph(run_dir, graph: dict[str, Any], *, repo: str | Path, holder=Non
             raise PreconditionError("promotion ref already exists")
         staged = {"run": run_out, "graph": graph_out, "initialize_ref": first}
         revision = _revision_digest(staged)
-        revision_path = _revision_path(run_dir, revision)
-        revision_path.parent.mkdir(parents=True, exist_ok=True)
-        if revision_path.exists():
-            if _read_json(revision_path) != staged:
-                raise PreconditionError("graph revision payload mismatch")
+        if run_store.has_db(run_dir):
+            existing = run_store.load_graph_revision(run_dir, revision)
+            if existing is not None:
+                if existing != staged:
+                    raise PreconditionError("graph revision payload mismatch")
+            else:
+                run_store.store_graph_revision(run_dir, revision, staged)
         else:
-            atomic_json(revision_path, staged)
+            revision_path = _revision_path(run_dir, revision)
+            revision_path.parent.mkdir(parents=True, exist_ok=True)
+            if revision_path.exists():
+                if _read_json(revision_path) != staged:
+                    raise PreconditionError("graph revision payload mismatch")
+            else:
+                atomic_json(revision_path, staged)
         append_event_locked(run_dir, {"type": "graph_accepted", "revision": revision}, holder=holder)
         _materialize_graph_revision_locked(run_dir, staged)
         _materialize_locked(run_dir, replay(run_dir), graph_out)
@@ -465,7 +525,8 @@ def append_events_locked(run_dir: Path, events: list[dict[str, Any]], *, holder=
     snap, graph = _replay(run_dir)
     if snap.get("truncated_tail"):
         raise PreconditionError("events.jsonl has truncated tail; repair before appending")
-    lines = []
+    staged_events: list[dict[str, Any]] = []
+    lines: list[str] = []
     intents = []
     snap["state"]["notified"] = set(snap["state"]["notified"])
     for event in events:
@@ -482,10 +543,11 @@ def append_events_locked(run_dir: Path, events: list[dict[str, Any]], *, holder=
         if "epoch" in out and out["epoch"] != active_epoch:
             raise PreconditionError(f"stale event epoch {out['epoch']} != {active_epoch}")
         out.setdefault("epoch", active_epoch)
-        if not lines:
+        if not staged_events:
             # Preserve the full preflight sweep, after holder/epoch authorization.
             _repair_dispatch_snapshots_locked(run_dir, snap)
         _validate_event_append(run_dir, snap, graph, out)
+        staged_events.append(out)
         lines.append(json.dumps(out, sort_keys=True, separators=(",", ":")) + "\n")
         if out.get("type") == "graph_accepted" and out.get("revision"):
             graph = _graph_from_revision(run_dir, _load_graph_revision(run_dir, out["revision"]))
@@ -496,11 +558,24 @@ def append_events_locked(run_dir: Path, events: list[dict[str, Any]], *, holder=
         snap["events"].append(out)
         if out.get("type") == "dispatch_intent":
             intents.append((out["node"], out["attempt"]))
-    if lines:
-        with open(run_dir / "events.jsonl", "a", encoding="utf-8") as fh:
-            fh.write("".join(lines))
-            fh.flush()
-            os.fsync(fh.fileno())
+    if staged_events:
+        if run_store.has_db(run_dir):
+            snap["state"]["notified"] = sorted(snap["state"]["notified"])
+            committed_rev = _committed_graph_revision(run_dir, snap["events"])
+            run_doc = dict(committed_rev["run"]) if committed_rev is not None else None
+            run_store.commit_events_and_projection(
+                run_dir,
+                staged_events,
+                run=run_doc,
+                state=snap["state"],
+                controller=snap["controller"],
+                graph=graph,
+            )
+        else:
+            with open(run_dir / "events.jsonl", "a", encoding="utf-8") as fh:
+                fh.write("".join(lines))
+                fh.flush()
+                os.fsync(fh.fileno())
         # Never use the pre-write projection as post-write authority.
         snap, graph = _replay(run_dir)
         for intent in intents:
@@ -510,8 +585,9 @@ def append_events_locked(run_dir: Path, events: list[dict[str, Any]], *, holder=
     _materialize_locked(run_dir, snap, graph)
     return snap
 
-
 def _events(run_dir: Path) -> tuple[list[dict[str, Any]], bool]:
+    if run_store.has_db(run_dir):
+        return run_store.read_events(run_dir), False
     path = run_dir / "events.jsonl"
     if not path.exists():
         return [], False
@@ -1141,6 +1217,15 @@ def _validate_run_scoped_event(run_dir: Path, snap: dict[str, Any], graph: dict[
         if event["key"] in {e.get("key") for e in snap["events"] if e.get("type") == "notification_sent"}:
             raise PreconditionError("notification already sent")
         return True
+    if typ == "note_recorded":
+        kind = event.get("kind")
+        body = event.get("body")
+        if not isinstance(kind, str) or kind not in run_store.NOTE_KINDS:
+            raise PreconditionError(f"note_recorded kind must be one of {sorted(run_store.NOTE_KINDS)}")
+        if not isinstance(body, str) or not body.strip():
+            raise PreconditionError("note_recorded requires non-empty body")
+        event["body"] = body.strip()
+        return True
     return False
 
 
@@ -1334,6 +1419,8 @@ def _apply_event(state: dict[str, Any], controller: dict[str, Any], graph: dict[
             controller["dispatch"] = True
         return
     if typ == "graph_accepted":
+        return
+    if typ == "note_recorded":
         return
 
     node_id = event.get("node")
@@ -1561,6 +1648,8 @@ def derive_status_md(state: dict[str, Any], graph: dict[str, Any]) -> str:
 
 def write_caches(run_dir: str | Path, state: dict[str, Any], controller: dict[str, Any]) -> None:
     run_dir = Path(canonical_path(run_dir))
+    if run_store.has_db(run_dir):
+        return
     _write_cache(run_dir / "state.json", json.dumps(state, sort_keys=True, separators=(",", ":")) + "\n")
     _write_cache(run_dir / "controller.json", json.dumps(controller, sort_keys=True, separators=(",", ":")) + "\n")
 
@@ -1574,11 +1663,67 @@ def _write_cache(path: Path, text: str) -> None:
     atomic_text(path, text)
 
 
+def record_note(
+    run_dir: str | Path,
+    *,
+    kind: str,
+    body: str,
+    holder: dict[str, str] | None = None,
+    lock_timeout: float = 120,
+) -> dict[str, Any]:
+    """Append a structured handoff/controller note event into the run ledger."""
+    return append_event(
+        run_dir,
+        {"type": "note_recorded", "kind": kind, "body": body},
+        holder=holder,
+        lock_timeout=lock_timeout,
+    )
+
+
+def list_notes(
+    run_dir: str | Path,
+    *,
+    kind: str | None = None,
+    epoch: int | None = None,
+) -> list[dict[str, Any]]:
+    """Read structured controller notes from run.db (or replay fallback for legacy jsonl runs)."""
+    run_path = Path(canonical_path(run_dir))
+    if run_store.has_db(run_path):
+        return run_store.read_notes(run_path, kind=kind, epoch=epoch)
+    snap = replay(run_path)
+    notes: list[dict[str, Any]] = []
+    idx = 0
+    for ev in snap["events"]:
+        ev_type = ev.get("type")
+        if ev_type == "note_recorded":
+            n_kind = str(ev.get("kind") or "decision")
+            n_body = str(ev.get("body") or "")
+        elif ev_type == "lease_drain_started" and isinstance(ev.get("handoff"), str) and ev["handoff"].strip():
+            n_kind = "handoff"
+            n_body = ev["handoff"].strip()
+        else:
+            continue
+        n_epoch = int(ev.get("epoch", 1))
+        if kind is not None and n_kind != kind:
+            continue
+        if epoch is not None and n_epoch != int(epoch):
+            continue
+        idx += 1
+        notes.append({
+            "id": idx,
+            "epoch": n_epoch,
+            "kind": n_kind,
+            "body": n_body,
+            "created_at": str(ev.get("t") or ""),
+        })
+    return notes
+
 
 def _materialize_locked(run_dir: Path, snap: dict[str, Any], graph: dict[str, Any] | None = None) -> None:
+    if run_store.has_db(run_dir):
+        return
     if graph is None:
         graph = load_graph(run_dir)
     write_caches(run_dir, snap["state"], snap["controller"])
     _write_cache(run_dir / "status.md", derive_status_md(snap["state"], graph))
-
 

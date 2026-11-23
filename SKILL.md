@@ -17,9 +17,9 @@ Resolve `ho.py` relative to this skill's installed directory (use absolute path 
 ## The 4-Step `ho.py` Loop
 Let `HO="python3 /absolute/skill/scripts/ho.py"`.
 
-1. **Initialize** the pane's gitignored session and canonical run (add `--pane TARGET` for any planned user-owned pane):
+1. **Initialize** a durable run (stored in XDG SQLite WAL under `~/.local/state/herdr-orchestrator/runs/<run-id>/run.db` — no repo `.gitignore` or `.md` files needed; add `--pane TARGET` for any planned user-owned pane):
    ```sh
-   $HO init --dir /absolute/repo/docs --job change-name
+   $HO init --job change-name
    ```
 2. **Accept** the task graph (accepts `schema_version` default `1` and `nodes` as dict or `[{id, ...}]` list):
    ```sh
@@ -38,7 +38,9 @@ Let `HO="python3 /absolute/skill/scripts/ho.py"`.
    - `finish`: `$HO finish NODE [--attempt A] [--force]`
    - `promote`: `$HO promote NODE [--attempt A]` (auto-resolves `new_sha` from receipts; no Python heredoc)
    - `retire`: `$HO retire --all`
-   - `status`: `$HO status` (or `$HO next --reconcile` to run holder-authorized reconcile first)
+   - `status`: `$HO status` (`--md` renders a human-readable markdown brief to stdout; `$HO next --reconcile` runs holder-authorized reconcile first)
+   - `note` / `brief`: `$HO note add --kind decision|contract|blocker|focus "..."` records structured handoff memory in `run.db`; `$HO brief [--md]` synthesizes the full run + handoff brief on demand
+   - `rotate` / `ack`: `$HO rotate --focus "..."` drains and spawns a successor with a dynamically synthesized prompt; successor runs `$HO ack --run <run> --nonce <n>`
 4. **Stop** when `ho next` reports `"phase": "done"`.
 
 ## Multi-Harness Support
@@ -57,12 +59,11 @@ Use `ho.py` as the primary front-door. Specialized tools and all underlying low-
 Exit codes: 0 ok, 1 runtime, 2 usage, 3 refusal/precondition (all lock-taking commands accept `--lock-timeout SECONDS`, default 120).
 
 ## State authority & Safety
-- `session.json.run` locates execution; append-only `<run>/events.jsonl` is authoritative. Never edit caches (`state.json`, `controller.json`, `status.md`) or treat Herdr `idle`/`done` as controller success.
+- Default storage is per-run SQLite WAL (`~/.local/state/herdr-orchestrator/runs/<run-id>/run.db`, overridable via `HERDR_ORCHESTRATOR_STATE_DIR`) + content-addressed `blobs/<sha256>` + rebuildable `index.db` for O(1) pane/worktree auto-discovery. Zero files are written into the target repo working tree. Legacy `--dir <repo>/docs` mode remains supported for existing runs.
+- The append-only event log (`events` table in `run.db`, or `events.jsonl` in legacy runs) is authoritative. Never treat Herdr `idle`/`done` as controller success.
 - Never run overlapping writers concurrently; serialize shared `owns` paths (non-integrator `**` overlaps everything).
-- Never use `latest`, relative run paths, or another pane's session as holder authority.
 - Never retire user-owned `pane` executors, mutate the primary checkout/promotion ref by hand, or stop the active Herdr server.
-- Rotate only at fresh measured context occupancy **>=50%** via `python3 scripts/rotate.py --session SESSION`; see [rotation](references/rotation.md).
-
+- Rotate only at fresh measured context occupancy **>=50%** via `$HO rotate --focus "..."` (or `python3 scripts/rotate.py --run RUN`); see [rotation](references/rotation.md).
 ## Self-improvement loop
 Queue distinct, evidenced skill defects in a detached private clone without blocking the current run:
 `python3 /absolute/skill/scripts/self-improve.py --skill-repo /absolute/editable-skill-repo --finding "Observed issue; evidence; proposed change; acceptance check"`

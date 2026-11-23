@@ -22,6 +22,7 @@ import cli_common
 import context_usage
 import herdr_cli
 import ioutil
+import state_paths
 
 CLI_EXTRA_CODES = {RuntimeError: 1}
 MIN_PYTHON = (3, 10)
@@ -46,8 +47,19 @@ def _check_python_and_fcntl() -> list[dict[str, str]]:
         checks.append(_check("fcntl", "ok", "POSIX fcntl available"))
     except ImportError as exc:
         checks.append(_check("fcntl", "fail", f"POSIX fcntl unavailable: {exc}"))
-    return checks
 
+    try:
+        import sqlite3
+        checks.append(_check("sqlite3", "ok", f"SQLite {sqlite3.sqlite_version} available"))
+    except ImportError as exc:
+        checks.append(_check("sqlite3", "fail", f"sqlite3 unavailable: {exc}"))
+
+    try:
+        root = state_paths.state_root()
+        checks.append(_check("state_dir", "ok", f"XDG state root ready: {root}"))
+    except Exception as exc:
+        checks.append(_check("state_dir", "fail", f"state root invalid: {exc}"))
+    return checks
 
 def _check_git_and_repo(repo_arg: str | None, docs_dir_arg: str | None) -> list[dict[str, str]]:
     checks: list[dict[str, str]] = []

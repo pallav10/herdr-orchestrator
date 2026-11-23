@@ -108,15 +108,20 @@ def _require_chosen_herdr() -> None:
         _refuse("HERDR_SOCKET_PATH and HERDR_SESSION must already be set; refusing to auto-attach")
 
 
-def _holder_identity(session: Path, holder: dict[str, str]) -> tuple[str, str]:
-    try:
-        workspace, pane = session_docs.holder_identity(session, holder)
-    except (ioutil.PreconditionError, ioutil.UsageError) as exc:
-        _refuse(str(exc))
+def _holder_identity(session: Path | None, holder: dict[str, str]) -> tuple[str, str]:
+    if session is None:
+        workspace = holder.get("workspace") if isinstance(holder, dict) else None
+        pane = holder.get("pane") if isinstance(holder, dict) else None
+        if not isinstance(workspace, str) or not workspace.strip() or not isinstance(pane, str) or not pane.strip():
+            _refuse("holder workspace and pane are required")
+    else:
+        try:
+            workspace, pane = session_docs.holder_identity(session, holder)
+        except (ioutil.PreconditionError, ioutil.UsageError) as exc:
+            _refuse(str(exc))
     if not is_core_mode() and not pane.startswith(f"{workspace}:"):
         _refuse("pane id is not an exact workspace prefix")
     return workspace, pane
-
 def _herdr_result(*args: str) -> dict[str, Any]:
     try:
         payload = herdr(*args)
@@ -312,8 +317,7 @@ def _session_header_id(path: str) -> str:
     _refuse("omp session header is malformed", source=CONTEXT_SOURCE)
 
 
-def read_context_usage(session: Path, holder: dict[str, str]) -> dict[str, Any]:
-    """Return validated same-process context evidence or raise ContextUsageError."""
+def read_context_usage(session: Path | None, holder: dict[str, str]) -> dict[str, Any]:
     _require_chosen_herdr()
     workspace, pane = _holder_identity(session, holder)
     path = context_snapshot_path(workspace, pane)
@@ -448,7 +452,7 @@ def read_context_usage(session: Path, holder: dict[str, str]) -> dict[str, Any]:
             result["omp_session_id"] = session_id
     return result
 
-def require_context_usage(session: Path, holder: dict[str, str]) -> dict[str, Any]:
+def require_context_usage(session: Path | None, holder: dict[str, str]) -> dict[str, Any]:
     evidence = read_context_usage(session, holder)
     if evidence["tokens"] * 2 < evidence["context_window"]:
         raise ContextUsageError(

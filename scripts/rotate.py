@@ -42,6 +42,7 @@ import liveness
 import scheduler
 import session_docs
 import context_usage
+import run_store
 
 from herdr_cli import current_holder_env, herdr
 from graph_model import AGENT_NAME_RE, LEASE_ACTIVE, LEASE_DRAINING, PROVENANCE_ORCHESTRATOR
@@ -104,18 +105,20 @@ def check_docs(session: Path) -> None:
     if missing:
         raise ioutil.PreconditionError(f"missing docs: {', '.join(missing)}")
 
-def start_lease_drain(run: Path, holder: dict[str, str], *, lock_timeout=120) -> dict[str, Any]:
+def start_lease_drain(run: Path, holder: dict[str, str], *, handoff: str | None = None, lock_timeout=120) -> dict[str, Any]:
     with ledger.with_lock(run, lock_timeout=lock_timeout):
         snap = ledger.replay(run)
         controller = snap["controller"]
         if controller.get("lease") == LEASE_DRAINING and graph_model.holder_exact(controller, holder):
             return snap
+        payload: dict[str, Any] = {"type": "lease_drain_started", **holder}
+        if isinstance(handoff, str) and handoff.strip():
+            payload["handoff"] = handoff.strip()
         return ledger.append_event_locked(
             run,
-            {"type": "lease_drain_started", **holder},
+            payload,
             holder=holder,
         )
-
 
 def ensure_native_quiesced(run: Path, holder: dict[str, str], timeout: int, *, lock_timeout=120) -> None:
     deadline = time.time() + timeout
@@ -202,6 +205,62 @@ def successor_prompt(session: Path, ack_script: Path, nonce: str, run: Path, *, 
         "tokens; do not redispatch them. Then continue orchestration."
     )
 
+def predecessor_meta_for_run(run: Path) -> dict[str, Any]:
+    workspace, pane = current_holder_env()
+    if not workspace or not pane:
+        raise ioutil.PreconditionError("HERDR_WORKSPACE_ID and HERDR_PANE_ID (or HC_TERMINAL_ID) are required")
+    snap = ledger.replay(run)
+    controller = snap["controller"]
+    session_id = controller.get("session")
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise ioutil.PreconditionError("run has no bound controller session")
+    holder = {"workspace": workspace, "pane": pane, "session": session_id}
+    if not graph_model.holder_exact(controller, holder):
+        raise ioutil.PreconditionError("rotate --run requires the exact active controller holder")
+    provenance = "user-owned"
+    fetched = herdr("workspace", "get", workspace).get("result", {})
+    raw_ws = fetched.get("workspace")
+    ws = raw_ws if isinstance(raw_ws, dict) else {}
+    tokens = _string_dict(ws.get("tokens"))
+    if tokens.get("provenance") == PROVENANCE_ORCHESTRATOR:
+        provenance = PROVENANCE_ORCHESTRATOR
+    return {
+        "workspace": workspace,
+        "pane": pane,
+        "session": session_id,
+        "provenance": provenance,
+        "retire": "close" if provenance == PROVENANCE_ORCHESTRATOR else "stand-down",
+    }
+
+
+def synthesize_successor_prompt(run: Path, ack_script: Path, nonce: str, *, lock_timeout=120) -> str:
+    """Synthesize a self-contained successor bootstrap prompt directly from run.db state and notes."""
+    ho_script = ack_script.with_name("ho.py")
+    snap = ledger.replay(run)
+    run_doc = ledger.load_run(run)
+    notes = ledger.list_notes(run)
+    brief = run_store.synthesize_brief(
+        run,
+        run=run_doc,
+        state=snap["state"],
+        controller=snap["controller"],
+        notes=notes,
+    )
+    run_abs = str(run)
+    return (
+        "You are the successor orchestrator pane. Ground first, then take over dispatch.\n\n"
+        "1) Acknowledge the controller lease transfer first:\n"
+        f"   python3 {ack_script} --nonce {nonce} --run {shlex.quote(run_abs)} --lock-timeout {lock_timeout}\n"
+        "2) Reconcile and inspect next actions using the unified CLI:\n"
+        f"   python3 {ho_script} next --reconcile --run {shlex.quote(run_abs)}\n"
+        "   (Re-print this brief anytime with: "
+        f"python3 {ho_script} brief --md --run {shlex.quote(run_abs)})\n"
+        "3) Confirm ack succeeded. Reattach live Herdr workers by recorded identity and tokens; "
+        "do not redispatch them. Continue orchestration.\n\n"
+        "--- Synthesized Run Brief (authoritative from run.db) ---\n"
+        f"{brief['markdown']}"
+    )
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -209,7 +268,10 @@ def main() -> int:
     parser.add_argument("--kind", default=None, help="successor harness kind (defaults to predecessor/env/omp)")
     parser.add_argument("--model-role", default="default")
     parser.add_argument("--model", default=None, help="explicit successor model (overrides --model-role)")
-    parser.add_argument("--session", required=True, help="predecessor session directory")
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--session", default=None, help="legacy predecessor session directory")
+    target.add_argument("--run", default=None, help="canonical run directory (zero-md SQLite rotation)")
+    parser.add_argument("--focus", default=None, help="handoff summary / current focus recorded on drain")
     parser.add_argument("--timeout", type=int, default=300)
     cli_common.add_lock_timeout_arg(parser)
     args = parser.parse_args()
@@ -226,25 +288,43 @@ def main() -> int:
     if not ack_script.is_file():
         raise RuntimeError(f"missing script: {ack_script}")
 
-    try:
-        session = session_docs.load_session(Path(args.session))
-    except RuntimeError as exc:
-        raise ioutil.PreconditionError(str(exc)) from exc
-    check_docs(session)
-    run = session_docs.session_run(session)
+    if args.run:
+        run = Path(ioutil.canonical_path(args.run))
+        if not run_store.has_db(run) and not (run / "run.json").is_file():
+            raise ioutil.PreconditionError(f"run not found: {run}")
+        session = None
+        predecessor = predecessor_meta_for_run(run)
+        holder = {key: predecessor[key] for key in authz.HOLDER_KEYS}
+        try:
+            usage = context_usage.require_context_usage(None, holder)
+        except context_usage.ContextUsageError as exc:
+            _print_context_refusal(exc)
+            return 3
+        start_lease_drain(run, holder, handoff=args.focus, lock_timeout=args.lock_timeout)
+        ensure_native_quiesced(run, holder, args.timeout, lock_timeout=args.lock_timeout)
+        nonce = uuid.uuid4().hex
+        prompt = synthesize_successor_prompt(run, ack_script.resolve(), nonce, lock_timeout=args.lock_timeout)
+        session_label = predecessor["session"]
+    else:
+        try:
+            session = session_docs.load_session(Path(args.session))
+        except RuntimeError as exc:
+            raise ioutil.PreconditionError(str(exc)) from exc
+        check_docs(session)
+        run = session_docs.session_run(session)
+        predecessor = predecessor_meta(session)
+        holder = {key: predecessor[key] for key in authz.HOLDER_KEYS}
+        try:
+            usage = context_usage.require_context_usage(session, holder)
+        except context_usage.ContextUsageError as exc:
+            _print_context_refusal(exc)
+            return 3
+        start_lease_drain(run, holder, handoff=args.focus, lock_timeout=args.lock_timeout)
+        ensure_native_quiesced(run, holder, args.timeout, lock_timeout=args.lock_timeout)
+        nonce = uuid.uuid4().hex
+        prompt = successor_prompt(session, ack_script.resolve(), nonce, run, lock_timeout=args.lock_timeout)
+        session_label = session.name
 
-    predecessor = predecessor_meta(session)
-    holder = {key: predecessor[key] for key in authz.HOLDER_KEYS}
-    try:
-        usage = context_usage.require_context_usage(session, holder)
-    except context_usage.ContextUsageError as exc:
-        _print_context_refusal(exc)
-        return 3
-    start_lease_drain(run, holder, lock_timeout=args.lock_timeout)
-    ensure_native_quiesced(run, holder, args.timeout, lock_timeout=args.lock_timeout)
-
-    nonce = uuid.uuid4().hex
-    prompt = successor_prompt(session, ack_script.resolve(), nonce, run, lock_timeout=args.lock_timeout)
     import harnesses
     succ_kind = harnesses.default_kind(explicit=args.kind, detected_kind=usage.get("harness"))
     cmd = [
@@ -291,7 +371,7 @@ def main() -> int:
         "acked": acked,
         "nonce": nonce,
         "predecessor": predecessor,
-        "session": session.name,
+        "session": session_label,
         "run": str(run),
         "context_usage": usage,
     }
