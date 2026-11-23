@@ -5,13 +5,13 @@
   },
   "metadata": {
     "description": "Herdr orchestration plugin for Claude Code and multi-harness environments",
-    "version": "1.8.0"
+    "version": "2.0.1"
   },
   "plugins": [
     {
       "name": "herdr-orchestrator",
       "source": "./",
-      "version": "1.8.0",
+      "version": "2.0.1",
       "description": "Durable controller-pane orchestration for Herdr across OMP, Claude Code, Codex, Copilot CLI, Pi, and Grok Build.",
       "author": {
         "name": "Pallav Parikh"

@@ -1,6 +1,6 @@
 {
   "name": "herdr-orchestrator",
-  "version": "1.8.0",
+  "version": "2.0.1",
   "description": "Durable multi-agent orchestration across OMP, Claude Code, Codex, Copilot CLI, Pi, and Grok Build from one Herdr controller pane.",
   "author": {
     "name": "Pallav Parikh"
