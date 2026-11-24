@@ -172,7 +172,7 @@ export default class HerdrOrchestratorGraph extends View {
     });
   }
 
-  focusTerminal(node) {
+  resolveLiveTerminal(node) {
     const live = terminals();
     const match = live.find(
       (t) =>
@@ -180,21 +180,26 @@ export default class HerdrOrchestratorGraph extends View {
         ((node.worker_id && t.name === node.worker_id) ||
           (node.terminal && t.address === node.terminal))
     );
-    const addr = match?.address || node.terminal;
-    if (!addr) return;
+    return match?.address || null;
+  }
+
+  focusTerminal(node, cx) {
+    const addr = this.resolveLiveTerminal(node);
+    if (!addr) {
+      this.actionLog = `Worker for ${node.id} is no longer live`;
+      if (cx) cx.notify();
+      return;
+    }
     run("agent.focus", { terminal: addr });
   }
 
-  peekTerminal(node) {
-    const live = terminals();
-    const match = live.find(
-      (t) =>
-        t.state === "live" &&
-        ((node.worker_id && t.name === node.worker_id) ||
-          (node.terminal && t.address === node.terminal))
-    );
-    const addr = match?.address || node.terminal;
-    if (!addr) return;
+  peekTerminal(node, cx) {
+    const addr = this.resolveLiveTerminal(node);
+    if (!addr) {
+      this.actionLog = `Worker for ${node.id} is no longer live`;
+      if (cx) cx.notify();
+      return;
+    }
     run("terminal.peek", { terminal: addr });
   }
 
@@ -210,7 +215,11 @@ export default class HerdrOrchestratorGraph extends View {
       .border_1()
       .border_color(primary ? t.solid : t.border)
       .cursor_pointer()
-      .on_click(onClick)
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((e, cx) => {
+        cx.stop_propagation();
+        onClick(e, cx);
+      })
       .child(label);
   }
 
@@ -237,6 +246,7 @@ export default class HerdrOrchestratorGraph extends View {
       .on_click((_e, cx) => {
         this.selectedNode = node.id;
         cx.notify();
+        if (hasTerm) this.focusTerminal(node, cx);
       })
       .child(
         h_flex()
@@ -269,8 +279,8 @@ export default class HerdrOrchestratorGraph extends View {
           h_flex()
             .gap(6)
             .pt(2)
-            .child(this.btn(t, `focus-${node.id}`, "Focus", () => this.focusTerminal(node)))
-            .child(this.btn(t, `peek-${node.id}`, "Peek", () => this.peekTerminal(node)))
+            .child(this.btn(t, `focus-${node.id}`, "Focus", (_e, cx) => this.focusTerminal(node, cx)))
+            .child(this.btn(t, `peek-${node.id}`, "Peek", (_e, cx) => this.peekTerminal(node, cx)))
         )
       );
   }
@@ -360,8 +370,8 @@ export default class HerdrOrchestratorGraph extends View {
           .flex_wrap()
           .when(Boolean(node.terminal || node.worker_id), (el) =>
             el
-              .child(this.btn(t, "detail-focus", "Focus Worker", () => this.focusTerminal(node), true))
-              .child(this.btn(t, "detail-peek", "Peek", () => this.peekTerminal(node)))
+              .child(this.btn(t, "detail-focus", "Focus Worker", (_e, cx) => this.focusTerminal(node, cx), true))
+              .child(this.btn(t, "detail-peek", "Peek", (_e, cx) => this.peekTerminal(node, cx)))
           )
           .when(node.state === "running", (el) =>
             el.child(this.btn(t, "detail-finish", "Finish Node", () => this.runHoAction(`finish ${node.id}`, ["finish", node.id], cx)))
