@@ -1,0 +1,9 @@
+{
+  "place": "none",
+  "focusable": true,
+  "overlay": {
+    "kind": "window",
+    "width": 960,
+    "height": 640
+  }
+}

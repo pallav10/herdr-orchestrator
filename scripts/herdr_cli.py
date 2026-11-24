@@ -45,6 +45,9 @@ _UNCONFIRMED_CODES = ("agent_prompt_stalled", "timeout")
 _HC_TOKEN_PREFIX = "orch."
 _HC_KNOWN_TOKENS = ("provenance", "run", "node", "attempt", "handoff-ack", "session")
 _HC_STATUS_MAP = {"idle": "idle", "working": "working", "done": "done", "blocked": "blocked", "error": "blocked"}
+_HERDR_APP_MOD_NAME = "herdr-orchestrator"
+_HERDR_APP_RUN_ENV = "HERDR_ORCHESTRATOR_ACTIVE_RUN"
+_HERDR_APP_SPACE_ENV = "HERDR_ORCHESTRATOR_SPACE_ID"
 
 
 def is_core_mode() -> bool:
@@ -69,6 +72,232 @@ def _hc_bin() -> str:
     if os.access(found, os.X_OK):
         return found
     raise ioutil.RunError("hc not on PATH")
+
+
+def _herdr_app_bin() -> str | None:
+    if os.environ.get("HERDR_ORCHESTRATOR_NO_UI") == "1":
+        return None
+    found = shutil.which("herdr-app") or str(Path.home() / ".local" / "bin" / "herdr-app")
+    return found if os.access(found, os.X_OK) else None
+
+
+def _herdr_app_home() -> Path:
+    raw = os.environ.get("HERDR_APP_HOME")
+    return Path(raw).expanduser() if raw else Path.home() / ".config" / "herdr-app"
+
+
+def _herdr_app_run(argv: list[str], *, timeout: int = READ_TIMEOUT) -> dict[str, Any] | None:
+    """Best-effort herdr-app CLI invocation; returns parsed JSON dict or None if unavailable."""
+    binary = _herdr_app_bin()
+    if not binary:
+        return None
+    try:
+        proc = subprocess.run([binary, *argv], capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    out = (proc.stdout or "").strip()
+    if not out:
+        return {}
+    try:
+        payload = json.loads(out)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def ensure_app_mod_installed() -> Path | None:
+    """Ensure the herdr-orchestrator mod is installed into herdr-app's mods/ folder."""
+    src = Path(__file__).resolve().parent.parent / "mods" / _HERDR_APP_MOD_NAME
+    if not (src / "main.js").is_file():
+        return None
+    app_home = _herdr_app_home()
+    mods_dir = app_home / "mods"
+    dst = mods_dir / _HERDR_APP_MOD_NAME
+    ho_path = str(Path(__file__).resolve().parent / "ho.py")
+    try:
+        mods_dir.mkdir(parents=True, exist_ok=True)
+        if dst.is_symlink():
+            if dst.resolve() != src.resolve():
+                dst.unlink()
+        if not dst.exists():
+            dst.symlink_to(src, target_is_directory=True)
+        elif dst.is_dir() and not dst.is_symlink():
+            for item in src.iterdir():
+                if item.is_file():
+                    shutil.copy2(item, dst / item.name)
+        # Record active ho.py path under appHome()/data/ so any plugin install location works dynamically.
+        cfg_dir = app_home / "data"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / f"{_HERDR_APP_MOD_NAME}.json").write_text(
+            json.dumps({"ho": ho_path}) + "\n", encoding="utf-8"
+        )
+    except OSError:
+        return None
+    return dst
+
+
+def _app_spaces() -> list[dict[str, Any]]:
+    ls = _herdr_app_run(["ls"])
+    if not isinstance(ls, dict):
+        return []
+    spaces = ls.get("spaces")
+    return [s for s in spaces if isinstance(s, dict)] if isinstance(spaces, list) else []
+
+
+def ensure_run_space(
+    run_dir: str | Path,
+    *,
+    job: str | None = None,
+    repo: str | None = None,
+    focus: bool = False,
+) -> dict[str, str] | None:
+    """Ensure a dedicated herdr-app space with the graph workflow mod tab exists for this run."""
+    if not is_core_mode() or not _herdr_app_bin():
+        return None
+    run_path = Path(run_dir).resolve()
+    run_id = run_path.name
+    space_name = f"orch: {job or run_id}"
+    folder = str(Path(repo).resolve()) if repo else str(run_path)
+    ensure_app_mod_installed()
+
+    existing_spaces = _app_spaces()
+    space_id: str | None = None
+    space_obj: dict[str, Any] | None = None
+    for sp in existing_spaces:
+        if sp.get("name") == space_name:
+            sid = sp.get("id")
+            if isinstance(sid, str) and sid:
+                space_id = sid
+                space_obj = sp
+                break
+
+    if not space_id:
+        created = _herdr_app_run([
+            "do", "space.new",
+            json.dumps({
+                "name": space_name,
+                "folder": folder,
+                "tab": "graph",
+                "focus": focus,
+            }),
+        ])
+        if not isinstance(created, dict):
+            return None
+        space_id = created.get("space") if isinstance(created.get("space"), str) else None
+        if not space_id:
+            for sp in _app_spaces():
+                if sp.get("name") == space_name and isinstance(sp.get("id"), str):
+                    space_id = sp["id"]
+                    space_obj = sp
+                    break
+        if not space_id:
+            return None
+        # Replace the default shell tab with the interactive graph mod tab.
+        default_tab = created.get("tab") if isinstance(created.get("tab"), str) else None
+        ho_path = str(Path(__file__).resolve().parent / "ho.py")
+        graph_tab = _herdr_app_run([
+            "do", "tab.new",
+            json.dumps({
+                "name": "Graph",
+                "space": space_id,
+                "mod": _HERDR_APP_MOD_NAME,
+                "props": {"run": str(run_path), "ho": ho_path},
+                "focus": focus,
+            }),
+        ])
+        if default_tab and isinstance(graph_tab, dict) and graph_tab.get("tab"):
+            _herdr_app_run(["do", "tab.close", json.dumps({"id": default_tab, "confirmed": True})])
+        return {"space": space_id, "tab": str(graph_tab.get("tab") or "") if isinstance(graph_tab, dict) else ""}
+
+    # Space already exists: ensure Graph tab is present.
+    tabs = space_obj.get("tabs") if isinstance(space_obj, dict) and isinstance(space_obj.get("tabs"), list) else []
+    graph_tab_id = None
+    for tb in tabs:
+        if isinstance(tb, dict) and tb.get("name") == "Graph" and isinstance(tb.get("id"), str):
+            graph_tab_id = tb["id"]
+            break
+    if not graph_tab_id:
+        ho_path = str(Path(__file__).resolve().parent / "ho.py")
+        created_tab = _herdr_app_run([
+            "do", "tab.new",
+            json.dumps({
+                "name": "Graph",
+                "space": space_id,
+                "mod": _HERDR_APP_MOD_NAME,
+                "props": {"run": str(run_path), "ho": ho_path},
+                "focus": focus,
+            }),
+        ])
+        if isinstance(created_tab, dict) and isinstance(created_tab.get("tab"), str):
+            graph_tab_id = created_tab["tab"]
+    if focus:
+        _herdr_app_run(["do", "space.select", json.dumps({"id": space_id})])
+        if graph_tab_id:
+            _herdr_app_run(["do", "tab.select", json.dumps({"id": graph_tab_id})])
+    return {"space": space_id, "tab": graph_tab_id or ""}
+
+
+def _resolve_active_run_space(cwd: str) -> str | None:
+    """Resolve a herdr-app space id for a spawned worker, creating/reusing one if needed."""
+    env_space = os.environ.get(_HERDR_APP_SPACE_ENV)
+    if env_space:
+        return env_space
+    run_dir = os.environ.get(_HERDR_APP_RUN_ENV)
+    if run_dir:
+        res = ensure_run_space(run_dir, repo=cwd, focus=False)
+        if res and res.get("space"):
+            return res["space"]
+    # Fall back to the controller's current space so standalone workers remain visible too.
+    controller_tid = os.environ.get("HC_TERMINAL_ID")
+    spaces = _app_spaces()
+    if controller_tid:
+        for sp in spaces:
+            for tb in sp.get("tabs") or []:
+                for term in tb.get("terminals") or []:
+                    if isinstance(term, dict) and term.get("terminal") == controller_tid:
+                        sid = sp.get("id")
+                        if isinstance(sid, str) and sid:
+                            return sid
+    for sp in spaces:
+        if sp.get("active") and isinstance(sp.get("id"), str):
+            return sp["id"]
+    return None
+
+
+def _app_adopt_terminal(addr: str, *, label: str, cwd: str, space_id: str | None = None) -> str | None:
+    """Attach a live hc terminal into a visible non-focused tab in herdr-app."""
+    if not _herdr_app_bin():
+        return None
+    sid = space_id or _resolve_active_run_space(cwd)
+    if not sid:
+        return None
+    # Create a lightweight placeholder tab in the target space (non-focused) to obtain a valid tab id,
+    # or stamp herdr.space + a fresh tab id directly so herdr-app adopts the terminal as a tab.
+    tab_id = f"tb_{ioutil.new_worker_id().replace('-', '')[:24]}"
+    try:
+        _run_hc(
+            ["label", "--json", addr, f"herdr.space={sid}", f"herdr.tab={tab_id}"],
+            orig_args=("workspace", "create"),
+        )
+    except ioutil.RunError:
+        return None
+    _herdr_app_run(["do", "tab.rename", json.dumps({"id": tab_id, "name": label})])
+    return tab_id
+
+
+def _app_rename_tab_for_terminal(addr: str, label: str) -> None:
+    if not _herdr_app_bin():
+        return
+    try:
+        term = _hc_json(["get", "--json", addr], orig_args=("pane", "rename"))
+    except ioutil.RunError:
+        return
+    labels = term.get("labels") if isinstance(term.get("labels"), dict) else {}
+    tab_id = labels.get("herdr.tab")
+    if isinstance(tab_id, str) and tab_id:
+        _herdr_app_run(["do", "tab.rename", json.dumps({"id": tab_id, "name": label})])
 
 
 def _extract_error_code(stderr: str) -> str | None:
@@ -402,6 +631,7 @@ def _hc_dispatch(args: tuple[str, ...]) -> dict[str, Any]:
 
     if res in ("workspace", "pane") and verb == "rename" and len(rest) >= 2:
         _run_hc(["label", "--json", rest[0], f"{_HC_TOKEN_PREFIX}label={rest[1]}"], orig_args=args)
+        _app_rename_tab_for_terminal(rest[0], rest[1])
         return {"result": {}}
 
     if res == "agent" and verb == "start" and rest:
@@ -414,20 +644,26 @@ def _hc_dispatch(args: tuple[str, ...]) -> dict[str, Any]:
         term = _hc_json(["get", "--json", pane], orig_args=args)
         cwd = term.get("cwd") or os.getcwd()
         old_labels = term.get("labels") if isinstance(term.get("labels"), dict) else {}
+        tab_label = old_labels.get(f"{_HC_TOKEN_PREFIX}label") or target_name
         run_argv = ["run", "--json", "--bg", "--no-parent", "--no-notify", "--outlive-parent", "--name", target_name, "--cwd", cwd]
         for k, v in old_labels.items():
-            if isinstance(k, str) and isinstance(v, str):
+            if isinstance(k, str) and isinstance(v, str) and not k.startswith("herdr."):
                 run_argv.extend(["--label", f"{k}={v}"])
         run_argv.extend(["--", binary, *extra])
-        # Kill placeholder shell first, then start the named agent terminal; callers re-fetch workspace/pane via agent get.
         created = _hc_json(run_argv, orig_args=args, timeout=TIMEOUT)
         new_addr = created.get("address") or created.get("id")
+        if isinstance(new_addr, str) and new_addr:
+            _app_adopt_terminal(
+                new_addr,
+                label=tab_label,
+                cwd=cwd,
+                space_id=old_labels.get("herdr.space") if isinstance(old_labels.get("herdr.space"), str) else None,
+            )
         try:
             _run_hc(["kill", "--json", pane], orig_args=args)
             _run_hc(["rm", "--json", pane], orig_args=args)
         except ioutil.RunError:
             pass
-        # Wait briefly for agent startup readiness (OSC 7501 idle/done) up to 30s.
         deadline = time.monotonic() + 30
         live_term = created
         while time.monotonic() < deadline:

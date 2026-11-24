@@ -32,7 +32,7 @@ import promotion
 import scheduler
 import run_store
 import state_paths
-from herdr_cli import current_holder_env, herdr
+from herdr_cli import current_holder_env, ensure_app_mod_installed, ensure_run_space, herdr
 
 CLI_EXTRA_CODES = {RuntimeError: 1}
 HO_SCRIPT = Path(__file__).resolve()
@@ -445,8 +445,14 @@ def _init_xdg_run(args: argparse.Namespace) -> dict[str, Any]:
 def _cmd_init(args: argparse.Namespace) -> int:
     result = _init_xdg_run(args)
     run_path = result.get("run")
+    ui = None
+    if isinstance(run_path, str):
+        ui = ensure_run_space(run_path, job=result.get("job"), repo=getattr(args, "repo", None), focus=False)
     next_cmd = _ho_cmd("accept", "--graph", "<graph.json>", "--run", run_path) if isinstance(run_path, str) else _ho_cmd("next")
-    print(json.dumps({**result, "next_command": next_cmd}))
+    payload = {**result, "next_command": next_cmd}
+    if ui:
+        payload["ui"] = ui
+    print(json.dumps(payload))
     return 0
 
 def _cmd_accept(args: argparse.Namespace) -> int:
@@ -482,13 +488,18 @@ def _cmd_accept(args: argparse.Namespace) -> int:
     accepted = ledger.accept_graph(run_path, normalized, repo=repo, holder=ctx["holder"], lock_timeout=args.lock_timeout)
     snap = ledger.replay(run_path)
     nxt = _compute_next(run_path, snap, live=None)
-    print(json.dumps({
+    run_doc = ledger.load_run(run_path)
+    ui = ensure_run_space(run_path, job=run_doc.get("job"), repo=repo, focus=False)
+    payload: dict[str, Any] = {
         "run": str(run_path),
         "base_sha": accepted.get("base_sha"),
         "promotion_ref": accepted.get("promotion_ref"),
         "nodes": sorted((accepted.get("nodes") or {}).keys()),
         "next_command": nxt["commands"][0] if nxt["commands"] else _ho_cmd("next", "--run", str(run_path)),
-    }))
+    }
+    if ui:
+        payload["ui"] = ui
+    print(json.dumps(payload))
     return 0
 
 
@@ -796,6 +807,131 @@ def _cmd_ack(args: argparse.Namespace) -> int:
     print(json.dumps(result))
     return 0
 
+
+def _compute_waves(nodes: dict[str, Any]) -> list[list[str]]:
+    """Group DAG node ids into topological wave layers (0-indexed)."""
+    if not nodes:
+        return []
+    deps_map: dict[str, set[str]] = {}
+    for nid, spec in nodes.items():
+        raw_deps = (spec.get("depends_on") or spec.get("deps")) if isinstance(spec, dict) else []
+        deps_map[nid] = {d for d in (raw_deps or []) if isinstance(d, str) and d in nodes}
+    waves: list[list[str]] = []
+    placed: set[str] = set()
+    remaining = set(nodes.keys())
+    while remaining:
+        layer = sorted(nid for nid in remaining if deps_map[nid].issubset(placed))
+        if not layer:
+            waves.append(sorted(remaining))
+            break
+        waves.append(layer)
+        placed.update(layer)
+        remaining.difference_update(layer)
+    return waves
+
+
+def _build_graph_snapshot(run_path: Path) -> dict[str, Any]:
+    run_doc = ledger.load_run(run_path)
+    snap = ledger.replay(run_path)
+    graph = ledger.load_graph(run_path) or {}
+    graph_nodes = graph.get("nodes") if isinstance(graph.get("nodes"), dict) else {}
+    state = snap.get("state") if isinstance(snap.get("state"), dict) else {}
+    state_nodes = state.get("nodes") if isinstance(state.get("nodes"), dict) else {}
+    ctrl = snap.get("controller") if isinstance(snap.get("controller"), dict) else {}
+    live = _live_agents_by_name() or {}
+    nxt = _compute_next(run_path, snap, live=live)
+    ready_set = set(_ready_nodes_from_state(state, graph))
+    waves = _compute_waves(graph_nodes)
+    wave_of = {nid: idx for idx, layer in enumerate(waves) for nid in layer}
+    node_rows: list[dict[str, Any]] = []
+    for nid in sorted(set(graph_nodes.keys()) | set(state_nodes.keys())):
+        plan = graph_nodes.get(nid) if isinstance(graph_nodes.get(nid), dict) else {}
+        st = state_nodes.get(nid) if isinstance(state_nodes.get(nid), dict) else {}
+        attempt = int(st.get("attempt") or 0)
+        target = _agent_target_for_node(run_path, nid, st)
+        live_agent = live.get(target) if target else None
+        handle = st.get("handle") if isinstance(st.get("handle"), dict) else {}
+        terminal = (
+            (live_agent.get("pane_id") or live_agent.get("workspace_id")) if isinstance(live_agent, dict) else None
+        ) or handle.get("pane") or handle.get("workspace")
+        node_rows.append({
+            "id": nid,
+            "wave": wave_of.get(nid, 0),
+            "state": "ready" if (st.get("state") == "planned" and nid in ready_set) else (st.get("state") or "planned"),
+            "executor": plan.get("executor") or st.get("executor") or "herdr-agent",
+            "deps": list(plan.get("depends_on") or plan.get("deps") or []),
+            "owns": list(plan.get("owns") or []),
+            "attempt": attempt,
+            "worker_id": target,
+            "terminal": terminal if isinstance(terminal, str) and terminal else None,
+            "live_status": live_agent.get("agent_status") if isinstance(live_agent, dict) else None,
+            "reason": st.get("reason"),
+            "question": st.get("question"),
+            "promotable": _needs_promotion(run_path, graph, nid, st),
+        })
+
+    return {
+        "run": str(run_path),
+        "run_id": run_doc.get("id") or run_path.name,
+        "job": run_doc.get("job") or run_path.name,
+        "repo": run_doc.get("repo"),
+        "phase": nxt["phase"],
+        "summary": nxt["summary"],
+        "commands": nxt["commands"],
+        "controller": {
+            "workspace": ctrl.get("workspace"),
+            "pane": ctrl.get("pane"),
+            "epoch": ctrl.get("epoch"),
+            "lease": ctrl.get("lease"),
+        },
+        "waves": waves,
+        "nodes": node_rows,
+        "notes": ledger.list_notes(run_path)[-10:],
+    }
+
+
+def _cmd_snapshot(args: argparse.Namespace) -> int:
+    runs = state_paths.list_runs()
+    run_path: Path | None = None
+    if args.run:
+        run_path = Path(ioutil.canonical_path(args.run))
+    else:
+        try:
+            ctx = _resolve_context(args, require_run=True, require_holder=False)
+            run_path = ctx["run"]
+        except ioutil.PreconditionError:
+            for item in runs:
+                cand = Path(item["run_dir"])
+                if run_store.has_db(cand) or (cand / "run.json").is_file():
+                    run_path = cand
+                    break
+    payload: dict[str, Any] = {
+        "runs": [
+            {"run_id": r["run_id"], "run_dir": r["run_dir"], "job": r["job"], "updated_at": r.get("updated_at")}
+            for r in runs[:20]
+        ],
+        "active": _build_graph_snapshot(run_path) if run_path is not None else None,
+    }
+    print(json.dumps(payload))
+    return 0
+
+
+def _cmd_ui(args: argparse.Namespace) -> int:
+    installed = ensure_app_mod_installed()
+    if args.install_only:
+        print(json.dumps({"installed": str(installed) if installed else None}))
+        return 0
+    ctx = _resolve_context(args, require_run=True, require_holder=False)
+    run_path: Path = ctx["run"]
+    run_doc = ledger.load_run(run_path)
+    ui = ensure_run_space(run_path, job=run_doc.get("job"), repo=run_doc.get("repo"), focus=args.focus)
+    print(json.dumps({
+        "run": str(run_path),
+        "installed": str(installed) if installed else None,
+        "ui": ui,
+    }))
+    return 0
+
 def _add_context_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--run", default=None, help="canonical run directory (auto-discovered if omitted)")
     parser.add_argument("--session", default=None, help="canonical session directory (auto-discovered if omitted)")
@@ -910,6 +1046,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_ack.add_argument("--run", required=True)
     cli_common.add_lock_timeout_arg(p_ack)
     p_ack.set_defaults(func=_cmd_ack)
+
+    p_snapshot = sub.add_parser("snapshot", help="Read-only live graph/wave/worker snapshot JSON for UI mods")
+    _add_context_args(p_snapshot)
+    p_snapshot.set_defaults(func=_cmd_snapshot)
+
+    p_ui = sub.add_parser("ui", help="Install the herdr-app graph mod and open/focus the run space")
+    p_ui.add_argument("--focus", action="store_true", help="focus the run space after opening")
+    p_ui.add_argument("--install-only", action="store_true", help="only install/sync the herdr-app mod without opening a space")
+    _add_context_args(p_ui)
+    p_ui.set_defaults(func=_cmd_ui)
     return parser
 
 def main() -> int:

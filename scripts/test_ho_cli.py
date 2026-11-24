@@ -438,5 +438,35 @@ class HoCliTests(unittest.TestCase):
             self.assertEqual(nxt["commands"], [])
 
 
+    def test_ho_snapshot_returns_waves_and_node_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo, state_dir = _init_test_repo(Path(td))
+            env = {
+                "HERDR_WORKSPACE_ID": "w1",
+                "HERDR_PANE_ID": "p1",
+                "HERDR_ORCHESTRATOR_STATE_DIR": str(state_dir),
+                "HERDR_ORCHESTRATOR_NO_UI": "1",
+            }
+            code, out, err = _run_ho(["init", "--job", "snap-job"], env=env, cwd=repo)
+            self.assertEqual(code, 0, err)
+            run_dir = json.loads(out)["run"]
+            graph_path = Path(td) / "g.json"
+            graph_path.write_text(json.dumps({
+                "nodes": {
+                    "A": {"id": "A", "executor": "herdr-agent", "outputs": [{"name": "summary", "type": "summary"}]},
+                    "B": {"id": "B", "executor": "herdr-agent", "depends_on": ["A"], "outputs": [{"name": "summary", "type": "summary"}]},
+                }
+            }), encoding="utf-8")
+            code, out, err = _run_ho(["accept", "--graph", str(graph_path), "--run", run_dir], env=env, cwd=repo)
+            self.assertEqual(code, 0, err)
+            with mock.patch.object(ho, "_live_agents_by_name", return_value={}):
+                code, out, err = _run_ho(["snapshot", "--run", run_dir], env=env, cwd=repo)
+            self.assertEqual(code, 0, err)
+            snap = json.loads(out)
+            self.assertEqual(snap["active"]["waves"], [["A"], ["B"]])
+            self.assertEqual([n["id"] for n in snap["active"]["nodes"]], ["A", "B"])
+            self.assertEqual(snap["active"]["nodes"][1]["wave"], 1)
+            self.assertEqual(snap["active"]["nodes"][1]["deps"], ["A"])
+
 if __name__ == "__main__":
     unittest.main()

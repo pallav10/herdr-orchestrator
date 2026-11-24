@@ -307,6 +307,80 @@ class HerdrCliTest(unittest.TestCase):
                 herdr_cli.herdr("agent", "get", "missing")
             self.assertEqual(ctx.exception.code, "agent_not_found")
 
+    def test_core_mode_adopts_started_worker_into_run_space_tab(self):
+        env = {
+            "HC_TERMINAL_ID": "t1d",
+            "HERDR_ORCHESTRATOR_SPACE_ID": "sp_run1",
+            "PATH": "/usr/bin:/bin",
+        }
+        with (
+            mock.patch.dict("os.environ", env, clear=True),
+            mock.patch.object(herdr_cli, "_hc_bin", return_value="/usr/local/bin/hc"),
+            mock.patch.object(herdr_cli, "_herdr_app_bin", return_value="/usr/local/bin/herdr-app"),
+            mock.patch.object(herdr_cli, "_herdr_app_run", return_value={}) as app_run,
+        ):
+            run = self.stub(side_effect=[
+                completed(stdout='{"address":"t10","cwd":"/tmp/wt","labels":{"orch.label":"A · a1"}}'),
+                completed(stdout='{"address":"t11","name":"fo-1234","state":"live","status":"idle"}'),
+                completed(stdout="{}"),  # hc label herdr.space/herdr.tab
+                completed(stdout="{}"),  # hc kill placeholder
+                completed(stdout="{}"),  # hc rm placeholder
+                completed(stdout='{"address":"t11","name":"fo-1234","state":"live","status":"idle"}'),
+            ])
+            res = herdr_cli.herdr("agent", "start", "fo-1234", "--kind", "omp", "--pane", "t10")
+            self.assertEqual(res["result"]["workspace_id"], "t11")
+            label_call = run.call_args_list[2].args[0]
+            self.assertEqual(label_call[:4], ["/usr/local/bin/hc", "label", "--json", "t11"])
+            self.assertIn("herdr.space=sp_run1", label_call)
+            self.assertTrue(any(tok.startswith("herdr.tab=tb_") for tok in label_call))
+            self.assertEqual(app_run.call_args.args[0][0:2], ["do", "tab.rename"])
+
+    def test_core_mode_headless_fallback_skips_herdr_app_when_disabled(self):
+        env = {
+            "HC_TERMINAL_ID": "t1d",
+            "HERDR_ORCHESTRATOR_NO_UI": "1",
+            "PATH": "/usr/bin:/bin",
+        }
+        with (
+            mock.patch.dict("os.environ", env, clear=True),
+            mock.patch.object(herdr_cli, "_hc_bin", return_value="/usr/local/bin/hc"),
+        ):
+            self.assertIsNone(herdr_cli._herdr_app_bin())
+            self.assertIsNone(herdr_cli.ensure_run_space("/tmp/fake-run", job="demo"))
+
+    def test_ensure_run_space_creates_space_and_replaces_default_tab_with_graph_mod(self):
+        env = {"HC_TERMINAL_ID": "t1d", "PATH": "/usr/bin:/bin"}
+        with tempfile.TemporaryDirectory() as td:
+            run_dir = Path(td) / "run-1"
+            run_dir.mkdir()
+            app_calls = []
+
+            def fake_app(argv, **_kw):
+                app_calls.append(argv)
+                if argv == ["ls"]:
+                    return {"spaces": []}
+                if argv[:2] == ["do", "space.new"]:
+                    return {"space": "sp_new", "tab": "tb_shell"}
+                if argv[:2] == ["do", "tab.new"]:
+                    return {"tab": "tb_graph"}
+                return {}
+
+            with (
+                mock.patch.dict("os.environ", env, clear=True),
+                mock.patch.object(herdr_cli, "_herdr_app_bin", return_value="/usr/local/bin/herdr-app"),
+                mock.patch.object(herdr_cli, "_herdr_app_home", return_value=Path(td) / "app"),
+                mock.patch.object(herdr_cli, "_herdr_app_run", side_effect=fake_app),
+            ):
+                ui = herdr_cli.ensure_run_space(run_dir, job="demo", repo=td, focus=False)
+                self.assertEqual(ui, {"space": "sp_new", "tab": "tb_graph"})
+                self.assertTrue((Path(td) / "app" / "mods" / "herdr-orchestrator").exists())
+                self.assertEqual([c[:2] for c in app_calls], [
+                    ["ls"],
+                    ["do", "space.new"],
+                    ["do", "tab.new"],
+                    ["do", "tab.close"],
+                ])
+
 
 if __name__ == "__main__":
     unittest.main()

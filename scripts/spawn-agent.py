@@ -108,6 +108,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import shlex
 import sys
 import time
@@ -872,6 +873,8 @@ def main() -> int:
                         "plan": args.plan,
                     })
             agent_target = worker_id or args.name
+            if context is not None:
+                os.environ["HERDR_ORCHESTRATOR_ACTIVE_RUN"] = str(run_path)
             title = human_label(args.name, node_id, attempt_id) if context is not None else args.name
             # worker_id stays in the workspace label until dispatch-identity.json exists.
             initial_label = f"{title} · {worker_id}" if worker_id else title
