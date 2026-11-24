@@ -179,6 +179,14 @@ def main() -> int:
     if node.get("state") == "ready":
         if node.get("executor") != "herdr-agent":
             raise ioutil.PreconditionError(f"node {node_id} executor must be herdr-agent")
+        if not record_path.is_file():
+            ledger.validate_dispatch_request_routing(
+                ledger.replay(run),
+                node_id,
+                ledger.load_graph(run) or {},
+                requested_role=args.model_role,
+                requested_effort=args.requested_effort,
+            )
         if not graph_model.has_current_dispatch_intent(node):
             ledger.append_event(
                 run,

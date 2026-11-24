@@ -468,5 +468,44 @@ class HoCliTests(unittest.TestCase):
             self.assertEqual(snap["active"]["nodes"][1]["wave"], 1)
             self.assertEqual(snap["active"]["nodes"][1]["deps"], ["A"])
 
+    def test_retirable_targets_includes_superseded_attempt_workers(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo, state_dir = _init_test_repo(Path(td))
+            env = {
+                "HERDR_WORKSPACE_ID": "w1",
+                "HERDR_PANE_ID": "p1",
+                "HERDR_ORCHESTRATOR_STATE_DIR": str(state_dir),
+                "HERDR_ORCHESTRATOR_NO_UI": "1",
+            }
+            code, out, err = _run_ho(["init", "--job", "retire-superseded"], env=env, cwd=repo)
+            self.assertEqual(code, 0, err)
+            run_path = Path(json.loads(out)["run"])
+            graph = {
+                "schema_version": 1,
+                "nodes": {
+                    "R": {"id": "R", "executor": "herdr-agent", "outputs": [{"name": "summary", "type": "summary"}]},
+                },
+            }
+            graph_path = Path(td) / "g.json"
+            graph_path.write_text(json.dumps(graph), encoding="utf-8")
+            code, _, err = _run_ho(["accept", "--graph", str(graph_path), "--run", str(run_path)], env=env, cwd=repo)
+            self.assertEqual(code, 0, err)
+
+            w1 = "fo-111111111111111111111111"
+            w2 = "fo-222222222222222222222222"
+            for att, wid in ((1, w1), (2, w2)):
+                adir = ledger.attempt_dir(run_path, "R", att)
+                adir.mkdir(parents=True, exist_ok=True)
+                (adir / "dispatch-identity.json").write_text(json.dumps({"worker_id": wid}), encoding="utf-8")
+
+            live = {w1: {"name": w1, "agent_status": "done"}, w2: {"name": w2, "agent_status": "done"}}
+            # Active attempt 2 still running: only superseded attempt 1 is retirable.
+            running_state = {"nodes": {"R": {"state": "running", "attempt": 2}}}
+            self.assertEqual(ho._retirable_targets(run_path, running_state, graph, live), [w1])
+            # Attempt 2 succeeded: both superseded attempt 1 and terminal attempt 2 are retirable.
+            done_state = {"nodes": {"R": {"state": "succeeded", "attempt": 2}}}
+            self.assertEqual(ho._retirable_targets(run_path, done_state, graph, live), [w1, w2])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1172,6 +1172,37 @@ def _normalize_dispatch_model(snap: dict[str, Any], event: dict[str, Any], node_
         raise PreconditionError("dispatch requested routing does not match plan")
 
 
+def validate_dispatch_request_routing(
+    snap: dict[str, Any],
+    node_id: str,
+    graph: dict[str, Any],
+    *,
+    requested_role: str | None = None,
+    requested_effort: str | None = None,
+) -> None:
+    """Pre-launch check that requested routing matches the accepted plan or prior/replanned attempt."""
+    requested = {"requested_role": requested_role, "requested_effort": requested_effort}
+    prior = None
+    authorized = None
+    for item in snap.get("events") or []:
+        if item.get("node") != node_id:
+            continue
+        if item.get("type") in {"dispatched", "attempt_started"}:
+            prior = item.get("model")
+            authorized = None
+        elif item.get("type") == "replan" and "model" in item:
+            authorized = item["model"]
+    if prior is not None:
+        prior_req = _request_fields(prior)
+        auth_req = _request_fields(authorized) if authorized is not None else None
+        if requested != prior_req and requested != auth_req:
+            raise PreconditionError("retry must reuse the prior model unless replanned")
+        return
+    expected = authorized if authorized is not None else (graph.get("nodes", {}).get(node_id, {}) or {}).get("model")
+    if requested != _request_fields(expected):
+        raise PreconditionError("dispatch requested routing does not match plan")
+
+
 def _normalize_blocked_continuation(snap: dict[str, Any], event: dict[str, Any], node_id: str, node: dict[str, Any], graph: dict[str, Any]) -> None:
     _normalize_dispatch_model(snap, event, node_id, graph)
     recorded = node.get("handle") if isinstance(node.get("handle"), dict) else {}

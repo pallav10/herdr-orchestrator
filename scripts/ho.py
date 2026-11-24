@@ -244,18 +244,39 @@ def _retirable_targets(run_path: Path, state: dict[str, Any], graph: dict[str, A
         return []
     nodes = state.get("nodes") if isinstance(state.get("nodes"), dict) else {}
     graph_nodes = graph.get("nodes") if isinstance(graph.get("nodes"), dict) else {}
-    targets: list[str] = []
+    targets: set[str] = set()
     for nid, nstate in nodes.items():
         if not isinstance(nstate, dict):
-            continue
-        if nstate.get("state") not in graph_model.ATTEMPT_TERMINAL:
             continue
         plan = graph_nodes.get(nid) or {}
         if plan.get("executor") != "herdr-agent":
             continue
-        target = _agent_target_for_node(run_path, nid, nstate)
-        if target and target in live and target not in targets:
-            targets.append(target)
+        current_attempt = int(nstate.get("attempt") or 0)
+        is_terminal = nstate.get("state") in graph_model.ATTEMPT_TERMINAL
+        if is_terminal:
+            target = _agent_target_for_node(run_path, nid, nstate)
+            if target and target in live:
+                targets.add(target)
+        # Superseded prior attempts (e.g. after invalidate-node + retry) stay live until retired.
+        node_dir = run_path / "artifacts" / nid
+        if node_dir.is_dir():
+            for attempt_entry in node_dir.iterdir():
+                if not attempt_entry.is_dir() or not attempt_entry.name.isdigit():
+                    continue
+                att = int(attempt_entry.name)
+                if att >= current_attempt and not is_terminal:
+                    continue
+                ident_path = attempt_entry / "dispatch-identity.json"
+                if not ident_path.is_file():
+                    continue
+                try:
+                    ident = json.loads(ident_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if isinstance(ident, dict):
+                    wid = ident.get("worker_id") or ident.get("agent")
+                    if isinstance(wid, str) and wid and wid in live:
+                        targets.add(wid)
     return sorted(targets)
 
 

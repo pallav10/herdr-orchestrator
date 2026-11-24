@@ -598,6 +598,32 @@ class TestDispatchAgent(RepoCase):
             self.assertEqual(len(blocked_events()), 1)
             self.assertEqual((Path(run) / "events.jsonl").read_bytes(), before)
 
+    def test_dispatch_refuses_mismatched_routing_before_spawn(self):
+        module = load_script("dispatch-agent.py")
+        graph = {
+            "schema_version": 1,
+            "nodes": {
+                "H": {
+                    "id": "H",
+                    "executor": "herdr-agent",
+                    "outputs": [{"name": "summary", "type": "summary"}],
+                }
+            },
+        }
+        run = str(new_run(self.root, graph, holder=self.holder))
+        fake = FakeSpawn()
+        module.run_child = fake
+
+        code, out, err = run_module(module, [*self.dispatch_argv(run, "H"), "--model-role", "smol"])
+
+        self.assertEqual(code, 3)
+        self.assertEqual(out, "")
+        self.assertIn("dispatch requested routing does not match plan", err)
+        self.assertEqual(fake.calls, [])
+        self.assertEqual(events_of(run, "dispatch_intent"), [])
+        self.assertEqual(events_of(run, "dispatched"), [])
+        self.assertFalse((run_state.attempt_dir(Path(run), "H", 1) / "launch-complete.json").exists())
+
 
 class TestFinishAgent(RepoCase):
     def writer_graph(self):
